@@ -30,7 +30,7 @@ Setting = {
         FaceRight         = false,   -- hadap kanan saat farming BFG
         AntiLag           = false,   -- skip heavy render (FC prevention)
         IgnoreOther       = false,   -- abaikan player lain
-        EnableMonitor     = false,   -- remote command dari server (opt-in)
+        EnableMonitor     = true,    -- remote monitoring aktif by default
     },
     World     = "",
     PosX      = 0,
