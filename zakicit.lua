@@ -402,12 +402,13 @@ local function MarkMagEmpty(x, y, ttl, source)
     end
 end
 
-local function MarkMagReady(x, y, source)
+local function MarkMagReady(x, y, count, source)
     if not x or not y then return end
+    count = tonumber(count) or 200000
     local key = MagKey(x, y)
-    MagIntel[key] = { empty = false, expires = 0, source = source or "local" }
+    MagIntel[key] = { empty = false, count = count, expires = 0, source = source or "local" }
     if source ~= "shared" then
-        PendingMagSync[key] = { x = tonumber(x), y = tonumber(y), empty = false }
+        PendingMagSync[key] = { x = tonumber(x), y = tonumber(y), empty = false, count = count }
     end
 end
 
@@ -629,7 +630,11 @@ local function FetchRemote()
         else
             Sleep(D("AfterRemote"))
             if inv(5640) > 0 then
-                Log(string.format("`2[SmartMag]`w Remote sukses diambil dari (%d, %d)!", target.x, target.y))
+                local curCount = (MagIntel[key] and MagIntel[key].count) or 200000
+                Log(string.format("`2[SmartMag]`w Remote sukses diambil dari (%d, %d)! Stok: %d. Lapor siap panen!", target.x, target.y, curCount))
+                MarkMagReady(target.x, target.y, curCount, "local")
+                S.MagplantX = target.x
+                S.MagplantY = target.y
                 changeRemote = false
                 m = false
                 return
@@ -832,7 +837,13 @@ do
         -- Serialize pending magplant updates untuk sharding fleet knowledge
         local magUpdates = {}
         for _, v in pairs(PendingMagSync) do
-            table.insert(magUpdates, string.format('{"x":%d,"y":%d,"empty":%s,"ttl":%d}', v.x, v.y, v.empty and "true" or "false", v.ttl or 300))
+            local cnt = v.empty and 0 or (v.count or 5000)
+            table.insert(magUpdates, string.format('{"x":%d,"y":%d,"empty":%s,"count":%d,"itemId":16706,"ttl":%d}',
+                v.x, v.y,
+                v.empty and "true" or "false",
+                cnt,
+                v.ttl or 300
+            ))
         end
         PendingMagSync = {} -- Bersihkan queue
         local magsJson = "[" .. table.concat(magUpdates, ",") .. "]"
@@ -1253,6 +1264,13 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 changeRemote = true
             else
                 LastDialogEmpty = false
+                local stockStr = a:match("Stock:%s*`?[%a%d]?(%d+)") or a:match("Stock%s*:%s*(%d+)") or a:match("(%d+)/200000") or a:match("(%d+)/5000")
+                local count = tonumber(stockStr) or 200000
+                if mx and my then
+                    MarkMagReady(tonumber(mx), tonumber(my), count, "local")
+                elseif S.MagplantX ~= 0 then
+                    MarkMagReady(S.MagplantX, S.MagplantY, count, "local")
+                end
             end
             return true
         end
@@ -1265,9 +1283,12 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             if a:find(p, 1, true) then return true end
         end
     elseif k == "OnTalkBubble" and type(b) == "string" then
-        if b:find("The MAGPLANT 5000 is empty.", 1, true) or b:find("MAGPLANT 5000 is empty", 1, true) then
+        if b:find("The MAGPLANT 5000 is empty.", 1, true) or b:find("MAGPLANT 5000 is empty", 1, true) or b:find("is empty", 1, true) then
             if S.MagplantX ~= 0 and S.MagplantY ~= 0 then
-                MagEmpty[S.MagplantX .. "," .. S.MagplantY] = true
+                Log(string.format("`4[SmartMag]`w Mag (%d, %d) HABIS setelah dipakai! Lapor ke fleet (stok: 0)...", S.MagplantX, S.MagplantY))
+                MarkMagEmpty(S.MagplantX, S.MagplantY, MAG_TTL_SEC, "local")
+                S.MagplantX = 0
+                S.MagplantY = 0
             end
             changeRemote = true
             return true
