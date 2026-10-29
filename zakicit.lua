@@ -404,7 +404,7 @@ end
 
 local function MarkMagReady(x, y, count, source)
     if not x or not y then return end
-    count = tonumber(count) or 200000
+    count = tonumber(count) -- nil jika tidak diketahui (jangan nebak 200k)
     local key = MagKey(x, y)
     MagIntel[key] = { empty = false, count = count, expires = 0, source = source or "local" }
     if source ~= "shared" then
@@ -630,8 +630,9 @@ local function FetchRemote()
         else
             Sleep(D("AfterRemote"))
             if inv(5640) > 0 then
-                local curCount = (MagIntel[key] and MagIntel[key].count) or 200000
-                Log(string.format("`2[SmartMag]`w Remote sukses diambil dari (%d, %d)! Stok: %d. Lapor siap panen!", target.x, target.y, curCount))
+                local curCount = MagIntel[key] and MagIntel[key].count
+                local countTxt = curCount and tostring(curCount) or "tidak diketahui"
+                Log(string.format("`2[SmartMag]`w Remote diambil dari (%d, %d)! Stok: %s. Lapor siap panen!", target.x, target.y, countTxt))
                 MarkMagReady(target.x, target.y, curCount, "local")
                 S.MagplantX = target.x
                 S.MagplantY = target.y
@@ -837,11 +838,16 @@ do
         -- Serialize pending magplant updates untuk sharding fleet knowledge
         local magUpdates = {}
         for _, v in pairs(PendingMagSync) do
-            local cnt = v.empty and 0 or (v.count or 5000)
-            table.insert(magUpdates, string.format('{"x":%d,"y":%d,"empty":%s,"count":%d,"itemId":16706,"ttl":%d}',
+            local cntField = "null"
+            if v.empty then
+                cntField = "0"
+            elseif v.count ~= nil then
+                cntField = tostring(math.floor(v.count))
+            end
+            table.insert(magUpdates, string.format('{"x":%d,"y":%d,"empty":%s,"count":%s,"itemId":16706,"ttl":%d}',
                 v.x, v.y,
                 v.empty and "true" or "false",
-                cnt,
+                cntField,
                 v.ttl or 300
             ))
         end
@@ -1264,8 +1270,13 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 changeRemote = true
             else
                 LastDialogEmpty = false
-                local stockStr = a:match("Stock:%s*`?[%a%d]?(%d+)") or a:match("Stock%s*:%s*(%d+)") or a:match("(%d+)/200000") or a:match("(%d+)/5000")
-                local count = tonumber(stockStr) or 200000
+                -- Coba parse angka stok asli dari dialog Growtopia
+                local rawStock = a:match("Stock:%s*`?[%a%d]?([%d,]+)") or a:match("Stock%s*:%s*([%d,]+)") or a:match("([%d,]+)/200000") or a:match("([%d,]+)/5000")
+                local count = nil
+                if rawStock then
+                    local cleanNum = rawStock:gsub(",", "")
+                    count = tonumber(cleanNum)
+                end
                 if mx and my then
                     MarkMagReady(tonumber(mx), tonumber(my), count, "local")
                 elseif S.MagplantX ~= 0 then
@@ -1283,13 +1294,12 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             if a:find(p, 1, true) then return true end
         end
     elseif k == "OnTalkBubble" and type(b) == "string" then
-        if b:find("The MAGPLANT 5000 is empty.", 1, true) or b:find("MAGPLANT 5000 is empty", 1, true) or b:find("is empty", 1, true) then
-            if S.MagplantX ~= 0 and S.MagplantY ~= 0 then
-                Log(string.format("`4[SmartMag]`w Mag (%d, %d) HABIS setelah dipakai! Lapor ke fleet (stok: 0)...", S.MagplantX, S.MagplantY))
-                MarkMagEmpty(S.MagplantX, S.MagplantY, MAG_TTL_SEC, "local")
-                S.MagplantX = 0
-                S.MagplantY = 0
-            end
+        -- Deteksi habis: kunci ke string resmi Growtopia Magplant, dan hanya jika bot memegang target
+        if (b:find("The MAGPLANT 5000 is empty", 1, true) or b:find("MAGPLANT 5000 is empty", 1, true)) and S.MagplantX ~= 0 and S.MagplantY ~= 0 then
+            Log(string.format("`4[SmartMag]`w Mag (%d, %d) HABIS! Lapor ke fleet (stok: 0)...", S.MagplantX, S.MagplantY))
+            MarkMagEmpty(S.MagplantX, S.MagplantY, MAG_TTL_SEC, "local")
+            S.MagplantX = 0
+            S.MagplantY = 0
             changeRemote = true
             return true
         end
