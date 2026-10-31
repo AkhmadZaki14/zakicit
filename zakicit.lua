@@ -31,6 +31,8 @@ Setting = {
         AntiLag           = false,   -- skip heavy render (FC prevention)
         IgnoreOther       = false,   -- abaikan player lain
         EnableMonitor     = true,    -- remote monitoring aktif by default
+        ScanBG            = false,   -- filter magplant berdasarkan background ID
+        MagBgID           = 0,       -- ID background target magplant
     },
     World     = "",
     PosX      = 0,
@@ -297,11 +299,11 @@ local function SlowFindPath(tx, ty, stepDelay)
     local path = FindSafePath(cx, cy, tx, ty)
     if path and #path > 0 then
         for _, pt in ipairs(path) do
-            FindPath(pt.x, pt.y)
+            FindPath(pt.x, pt.y, stepDelay)
             Sleep(stepDelay)
         end
     else
-        FindPath(tx, ty)
+        FindPath(tx, ty, stepDelay)
         Sleep(stepDelay)
     end
 end
@@ -462,17 +464,20 @@ local function Wear(item)
     TOP_UP = (item == "Mythical Necklace")
 end
 
--- Auto Find Magplant: cari semua fg=5638 di world
+-- Auto Find Magplant: cari fg=5638 di world (dengan opsi filter ScanBG)
 local function GetMag()
     local list = {}
     local w = GetWorld()
     if not w then return list end
     local maxX, maxY = w.width - 1, w.height - 1
+    local filterBg = S.PNB.ScanBG and tonumber(S.PNB.MagBgID) or nil
     for y = 0, maxY do
         for x = 0, maxX do
             local t = GetTile(x, y)
             if t and t.fg == 5638 then
-                table.insert(list, { x = x, y = y })
+                if not filterBg or t.bg == filterBg then
+                    table.insert(list, { x = x, y = y })
+                end
             end
         end
     end
@@ -705,13 +710,62 @@ local function Consume()
     Sleep(D("Consume"))
 end
 
+local function AutoFindTel()
+    local w = GetWorld()
+    if not w then return nil end
+    local me = GetLocal()
+    local originX = (S.PosX ~= 0) and S.PosX or (me and math.floor(me.pos.x / 32) or 0)
+    local originY = (S.PosY ~= 0) and S.PosY or (me and math.floor(me.pos.y / 32) or 0)
+    local bestX, bestY = nil, nil
+    local bestDist = 999999
+    local maxX, maxY = w.width - 1, w.height - 1
+    for y = 0, maxY do
+        for x = 0, maxX do
+            local t = GetTile(x, y)
+            if t and (t.fg == 3898 or t.bg == 3898) then
+                local dist = math.abs(x - originX) + math.abs(y - originY)
+                if dist < bestDist then
+                    bestDist = dist
+                    bestX, bestY = x, y
+                end
+            end
+        end
+    end
+    if bestX and bestY then
+        S.TelX = bestX
+        S.TelY = bestY
+        Log(string.format("`2[Tel]`w Auto-search: Telephone ditemukan di (%d, %d) jarak %d", bestX, bestY, bestDist))
+        return bestX, bestY
+    end
+    Log("`4[Tel]`w Tidak ada Telephone (3898) terdeteksi di world!")
+    return nil
+end
+
 local function TelPos()
     if S.TelX ~= 0 or S.TelY ~= 0 then return S.TelX, S.TelY end
+    local fx, fy = AutoFindTel()
+    if fx and fy then return fx, fy end
     return S.PosX, S.PosY
+end
+
+local function PunchTile(x, y)
+    local me = GetLocal()
+    local px = me and me.pos.x or (x * 32)
+    local py = me and me.pos.y or (y * 32)
+    SendPacketRaw(false, {
+        type = 3,
+        value = 18, -- fist / punch
+        px = x,
+        py = y,
+        x = px,
+        y = py,
+    })
 end
 
 local function TelDialog(button)
     local tx, ty = TelPos()
+    PunchTile(tx, ty)
+    Sleep(100)
     SendPacket(2, "action|dialog_return\ndialog_name|telephone\nnum|53785|\nx|" .. tx ..
         "|\ny|" .. ty .. "|\nbuttonClicked|" .. button)
 end
@@ -1535,6 +1589,20 @@ local function TabMag()
         Log("`2SmartMag: Semua status kosong di-reset!")
     end
     Sp(4)
+    Section("Filter Magplant (BG)")
+    local csb, vsb = CB("Aktifkan Filter Background##magbg", S.PNB.ScanBG)
+    if csb then
+        S.PNB.ScanBG = vsb
+        RecalcMag()
+    end
+    if S.PNB.ScanBG then
+        local cmb, vmb = ImGui.InputInt("Target Background ID##magbgid", S.PNB.MagBgID)
+        if cmb then
+            S.PNB.MagBgID = math.max(0, vmb)
+            RecalcMag()
+        end
+    end
+    Sp(4)
     Sep(C.border)
 
     -- DAFTAR MAGPLANT TERDEKAT
@@ -1617,6 +1685,11 @@ local function TabSetting()
     if cg then S.PNB.MaxGems = math.max(0, mg) end
     local ctx, tx = ImGui.InputInt("Tel X", S.TelX); if ctx then S.TelX = tx end
     local cty, ty = ImGui.InputInt("Tel Y", S.TelY); if cty then S.TelY = ty end
+    if NButton("Auto Cari Telephone", C.neon_cyan, -1, 32) then AutoFindTel() end
+    if S.TelX ~= 0 then
+        CText(C.text_dim, string.format("  Tel pos: (%d, %d)", S.TelX, S.TelY))
+        if ImGui.Button("Reset Tel Pos", ImVec2(-1, 26)) then S.TelX = 0; S.TelY = 0 end
+    end
     Sp(4)
 
     Section("Delay")
