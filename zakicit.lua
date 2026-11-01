@@ -703,6 +703,8 @@ end
 local LastSuckBgem = 0
 local function SuckBgems()
     if not S.PNB.AutoSuckBgems then return end
+    -- Jangan saat sedang CheckRentStatus (popup self-wrench sedang terbuka)
+    if RentChecking then return end
     local now = os.time()
     if now - LastSuckBgem < 5 then return end
     LastSuckBgem = now
@@ -858,12 +860,10 @@ local function CheckRentStatus(force)
     local me = GetLocal()
     local netId = me and me.netid or 0
     Log("`9[Rent]`w Memeriksa status durasi sewa pakaian (Self-Wrench)...")
-    if netId and netId > 0 then
-        SendPacket(2, "action|wrench\n|netid|" .. tostring(netId))
-    else
-        Wrench(0, 0)
-    end
-    Sleep(800)
+    SendPacket(2, "action|wrench\n|netid|" .. tostring(math.max(1, netId)))
+    Sleep(2000) -- beri waktu cukup untuk server membalas dialog popup
+    -- Auto-reset RentChecking jika dialog tidak datang (timeout safety)
+    RentChecking = false
 end
 
 -- Step 2: WAR Renting (Spam mesin sewa sampai dapat)
@@ -1530,8 +1530,9 @@ AddHook("OnVariant", "PNB_VAR", function(var)
     end
 
     if k == "OnDialogRequest" and type(a) == "string" then
-        -- RENTING 1: Intercept Self-Wrench Popup -> Cek apakah item sewaan aktif di Active Effects
-        if a:find("clothlease", 1, true) and (a:find("dialog_name|popup", 1, true) or a:find("Active effects:", 1, true) or a:find("Cloth Renting", 1, true)) then
+        -- RENTING 1: Intercept Self-Wrench Popup -> HANYA JIKA sedang dalam proses CheckRentStatus (RentChecking == true)
+        -- Jika user manual wrench diri sendiri, jangan di-intercept agar menu profil/cheats tetap bisa dibuka bebas!
+        if RentChecking and a:find("clothlease", 1, true) and (a:find("dialog_name|popup", 1, true) or a:find("Active effects:", 1, true) or a:find("Cloth Renting", 1, true)) then
             -- Sensor dinamis: cek apakah item sewaan ada di Active Effects
             local activeEff = a:match("Active effects:(.-)You have") or a:match("Active effects:(.*)") or ""
             if RentItemId ~= "" and activeEff:find(RentItemId, 1, true) then
