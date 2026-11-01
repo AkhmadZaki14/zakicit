@@ -849,6 +849,10 @@ end
 -- Step 1: Wrench diri sendiri untuk cek durasi sewa + pasang item
 local function CheckRentStatus(force)
     if not S.PNB.AutoRent then return end
+    -- Guard: JANGAN PERNAH self-wrench kalau bot sedang aktif farming (m == true)!
+    -- Self-wrench saat farming bikin dialog popup kebuka dan trigger lepas/pasang pakaian!
+    if not force and m then return end
+
     local now = os.time()
     -- Anti-spam: minimal jeda 30 detik untuk self-wrench
     if not force and now - LastRentCheck < 30 then return end
@@ -1321,8 +1325,8 @@ local function Step()
     end
 
     -- SISTEM RENTING:
-    -- 1. Cek durasi sewa secara periodik saat awal start (maksimal sekali per 60 detik)
-    if S.PNB.AutoRent and RentExpires == 0 and not RentChecking and (os.time() - LastRentCheck >= 60) then
+    -- 1. Cek durasi sewa secara periodik saat awal start (HANYA jika TIDAK sedang farming!)
+    if not m and S.PNB.AutoRent and RentExpires == 0 and not RentChecking and (os.time() - LastRentCheck >= 60) then
         CheckRentStatus(false)
     end
     -- 2. WAR RENTING: Jika durasi sewa sisa < 60 detik atau belum punya item sewa:
@@ -1531,6 +1535,9 @@ AddHook("OnVariant", "PNB_VAR", function(var)
 
         -- RENTING 1: Intercept Self-Wrench Popup -> Cek apakah item sewaan aktif di Active Effects
         if a:find("clothlease", 1, true) and (a:find("dialog_name|popup", 1, true) or a:find("Active effects:", 1, true) or a:find("Cloth Renting", 1, true)) then
+            -- Guard: kalau bot sedang farming, jangan buka clothlease!
+            if m then return true end
+
             -- Sensor dinamis: cek apakah item sewaan ada di Active Effects
             -- Cek ID icon atau nama item
             local activeEff = a:match("Active effects:(.-)You have") or a:match("Active effects:(.*)") or ""
@@ -1548,6 +1555,9 @@ AddHook("OnVariant", "PNB_VAR", function(var)
 
         -- RENTING 2: Intercept Menu clothlease -> Parse durasi (D, H, M, S) + equip guard
         if a:find("clothlease", 1, true) or a:find("Rented Clothing", 1, true) then
+            -- Guard: kalau bot sedang farming, jangan toggle pakaian!
+            if m then return true end
+
             local clean = StripColor(a)
             -- Cari tombol cloth_ (misal cloth_-258) dan icon item ID (misal 16690)
             local btn = clean:match("(cloth_%-?%d+)")
