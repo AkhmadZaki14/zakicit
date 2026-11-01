@@ -1093,8 +1093,13 @@ do
         PendingMagSync = {} -- Bersihkan queue
         local magsJson = "[" .. table.concat(magUpdates, ",") .. "]"
 
+        -- Durasi sewa Paywall & Mray/Renting Station untuk Vercel & WhatsApp
+        local nowTs = os.time()
+        local paywallRem = (PaywallExpires > 0) and math.max(0, PaywallExpires - nowTs) or -1
+        local rentRem = (RentExpires > 0) and math.max(0, RentExpires - nowTs) or -1
+
         local body = string.format(
-            '{"userId":"%s","name":"%s","world":"%s","posX":%d,"posY":%d,"gems":%d,"wl":%d,"dl":%d,"bgl":%d,"level":%d,"pingMs":%d,"uptimeSec":%d,"instanceId":"%s","seq":%d,"magReports":%s}',
+            '{"userId":"%s","name":"%s","world":"%s","posX":%d,"posY":%d,"gems":%d,"wl":%d,"dl":%d,"bgl":%d,"level":%d,"pingMs":%d,"uptimeSec":%d,"instanceId":"%s","seq":%d,"magReports":%s,"paywallRemSec":%d,"rentRemSec":%d,"rentEquipped":%s,"autoPaywall":%s,"autoRent":%s}',
             self.userId,
             self.name:gsub('"', '\\"'):gsub("[%c]", ""),
             world:gsub('"', '\\"'):gsub("[%c]", ""),
@@ -1102,7 +1107,12 @@ do
             gems, wl, dl, bgl, level, ping,
             os.time() - self.startTime,
             self.instanceId, self.seq,
-            magsJson
+            magsJson,
+            paywallRem,
+            rentRem,
+            RentEquipped and "true" or "false",
+            S.PNB.AutoPaywall and "true" or "false",
+            S.PNB.AutoRent and "true" or "false"
         )
         local ok, res = pcall(MakeRequest, self.endpoint, "POST", { ["Content-Type"] = "application/json" }, body)
         if ok and res and type(res) == "table" and res.content then
