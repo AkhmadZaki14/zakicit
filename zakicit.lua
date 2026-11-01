@@ -30,7 +30,8 @@ Setting = {
         EnableMonitor     = true,    -- remote monitoring aktif by default
         ScanBG            = false,   -- filter magplant berdasarkan background ID
         MagBgID           = 0,       -- ID background target magplant
-        AutoPaywall       = false,   -- auto renew paywall
+        AutoPaywall       = false,   -- aktifkan fitur cek/sensor paywall
+        AutoBuyPaywall    = false,   -- auto beli paywall saat expired (off = cuma deteksi, bot stop)
     },
     World     = "",
     PosX      = 0,
@@ -1370,11 +1371,17 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 Log(string.format("`2[Paywall]`w Akses masih aktif. Sisa: %s", FTime(rem)))
                 return true
             end
-            -- Dialog purchase (belum punya akses / sudah habis)
+            -- Dialog purchase (belum punya akses / habis / dicabut)
             if a:find("Purchase!", 1, true) and S.PNB.AutoPaywall then
-                Log(string.format("`9[Paywall]`w Membeli akses paywall (%d, %d)...", tx, ty))
-                SendPacket(2, string.format("action|dialog_return\ndialog_name|paywall\nx|%d|\ny|%d|\n", tx, ty))
-                PaywallExpires = 0
+                if S.PNB.AutoBuyPaywall then
+                    Log(string.format("`9[Paywall]`w Membeli akses paywall (%d, %d)...", tx, ty))
+                    SendPacket(2, string.format("action|dialog_return\ndialog_name|paywall\nx|%d|\ny|%d|\n", tx, ty))
+                    PaywallExpires = 0
+                else
+                    Log("`4[Paywall]`w Akses paywall habis/dicabut! Auto-buy nonaktif. PNB dihentikan.")
+                    StopPNB()
+                    Run.status = "Paywall Habis (Manual)"
+                end
             end
             return true
         end
@@ -1785,6 +1792,15 @@ local function TabSetting()
 
     Section("Paywall")
     if S.PNB.AutoPaywall then
+        -- Toggle Auto-Buy vs Manual Stop
+        local cbBuy, vBuy = CB("Auto Beli Ulang Paywall##abp", S.PNB.AutoBuyPaywall)
+        if cbBuy then S.PNB.AutoBuyPaywall = vBuy end
+        if not S.PNB.AutoBuyPaywall then
+            CText(C.neon_yel, "  [!] Mode Aman: Bot STOP jika akses habis/dicabut (tidak boros WL).")
+        else
+            CText(C.neon_cyan, "  [Auto] Bot akan langsung beli ulang jika habis/dicabut.")
+        end
+        Sp(3)
         -- Tombol capture via punch tile
         local pwSet = S.PaywallX ~= 0 or S.PaywallY ~= 0
         if NButton(pwSet and string.format("[OK] Paywall: (%d, %d)", S.PaywallX, S.PaywallY) or "[!] Punch Tile Paywall untuk Set", pwSet and C.neon_cyan or C.neon_red, -1, 34) then
