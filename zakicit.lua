@@ -1139,14 +1139,16 @@ end
 -- ------------------------------------------------------------
 --  SAVE / LOAD
 -- ------------------------------------------------------------
-local function SavePaths()
+local function SavePaths(suffix)
+    suffix = suffix or ""
+    local name = "ZAKICIT_SETTINGS" .. suffix .. ".txt"
     local p = {}
-    p[#p + 1] = "/storage/emulated/0/Android/media/com.rtsoft.growtopia/scripts/ZAKICIT_SETTINGS.txt"
+    p[#p + 1] = "/storage/emulated/0/Android/media/com.rtsoft.growtopia/scripts/" .. name
     local ok, ad = pcall(function() return os.getenv("APPDATA") end)
     if ok and ad and ad ~= "" then
-        p[#p + 1] = ad .. "\\Growtopia\\scripts\\ZAKICIT_SETTINGS.txt"
+        p[#p + 1] = ad .. "\\Growtopia\\scripts\\" .. name
     end
-    p[#p + 1] = "ZAKICIT_SETTINGS.txt"
+    p[#p + 1] = name
     return p
 end
 
@@ -1156,9 +1158,11 @@ local function SyncDerived()
     UpdateBypassRules()
 end
 
-function SaveSettings()
+function SaveSettings(slot)
+    local suffix = slot and ("_USER" .. tostring(slot)) or ""
+    local label = slot and ("User " .. tostring(slot)) or "Default"
     S.World = worldName
-    for _, path in ipairs(SavePaths()) do
+    for _, path in ipairs(SavePaths(suffix)) do
         local f = io.open(path, "w")
         if f then
             for k, v in pairs(S.PNB) do
@@ -1181,16 +1185,18 @@ function SaveSettings()
             end
             f:close()
             savePathUsed = path
-            Log("`2Config tersimpan: " .. path)
+            Log("`2Config tersimpan (" .. label .. "): " .. path)
             return true
         end
     end
-    Log("`4Gagal menyimpan config")
+    Log("`4Gagal menyimpan config " .. label)
     return false
 end
 
-function LoadSettings()
-    for _, path in ipairs(SavePaths()) do
+function LoadSettings(slot)
+    local suffix = slot and ("_USER" .. tostring(slot)) or ""
+    local label = slot and ("User " .. tostring(slot)) or "Default"
+    for _, path in ipairs(SavePaths(suffix)) do
         local f = io.open(path, "r")
         if f then
             for line in f:lines() do
@@ -1207,11 +1213,11 @@ function LoadSettings()
             f:close()
             SyncDerived()
             savePathUsed = path
-            Log("`2Config dimuat: " .. path)
+            Log("`2Config dimuat (" .. label .. "): " .. path)
             return true
         end
     end
-    Log("`3Config belum ada, pakai default")
+    Log("`3Config (" .. label .. ") belum ada")
     return false
 end
 
@@ -2100,10 +2106,33 @@ end
 
 -- ─── TAB 4: CONFIG ──────────────────────────────────────────
 local function TabConfig()
-    if NButton("SAVE SETTINGS", C.neon_green, -1, 44) then SaveSettings() end
+    Section("Default Profile")
+    if NButton("SAVE DEFAULT", C.neon_green, -1, 38) then SaveSettings() end
+    Sp(2)
+    if NButton("LOAD DEFAULT", {0.00,0.55,1.00,1}, -1, 32) then LoadSettings() end
     Sp(4)
-    if NButton("LOAD SETTINGS", {0.00,0.55,1.00,1}, -1, 36) then LoadSettings() end
-    if savePathUsed ~= "" then CText(C.text_dim, "  " .. savePathUsed) end
+
+    Section("User Profiles (1 - 3)")
+    -- Baris SAVE USER 1-3
+    CText(C.neon_cyan, "  Simpan ke Slot:")
+    local wBtn = AvailW() / 3 - 4
+    if ImGui.Button("SAVE USER 1", ImVec2(wBtn, 34)) then SaveSettings(1) end
+    ImGui.SameLine()
+    if ImGui.Button("SAVE USER 2", ImVec2(wBtn, 34)) then SaveSettings(2) end
+    ImGui.SameLine()
+    if ImGui.Button("SAVE USER 3", ImVec2(wBtn, 34)) then SaveSettings(3) end
+    Sp(2)
+
+    -- Baris LOAD USER 1-3
+    CText(C.neon_yel, "  Muat dari Slot:")
+    if ImGui.Button("LOAD USER 1", ImVec2(wBtn, 34)) then LoadSettings(1) end
+    ImGui.SameLine()
+    if ImGui.Button("LOAD USER 2", ImVec2(wBtn, 34)) then LoadSettings(2) end
+    ImGui.SameLine()
+    if ImGui.Button("LOAD USER 3", ImVec2(wBtn, 34)) then LoadSettings(3) end
+    Sp(4)
+
+    if savePathUsed ~= "" then CText(C.text_dim, "  Last File: " .. savePathUsed) end
     Sp(6)
     Section("Log")
     if ImGui.Button("Clear Log", ImVec2(-1, 28)) then LogBuf = {} end
