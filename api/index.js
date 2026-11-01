@@ -1,0 +1,1389 @@
+'use strict';
+
+const express = require('express');
+const fs = require('fs');
+const crypto = require('crypto');
+
+const app = express();
+
+const SERVER_INSTANCE_ID = crypto.randomUUID();
+const SERVER_BOOT_TIME = Date.now();
+
+app.use(express.json({ limit: '64kb' }));
+app.use((_, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key');
+  next();
+});
+app.options('*', (_, res) => res.sendStatus(204));
+
+// =============================================================
+//  PERSISTENCE — Vercel Blob (private) dengan CAS, fallback /tmp
+//  Atomic per userId: optimistic concurrency (ifMatch) + merge
+//  last-write-wins by lastSeen, jadi instance berbeda tidak
+// =============================================================
+//  PERSISTENCE — Upstash Redis (REST) + Fallback /tmp
+//  Multi-container serverless sinkron instan via Redis key-value
+// =============================================================
+const TMP_FILE = '/tmp/gt_fleet_state.json';
+const READ_CACHE_MS = 1500;
+const PERSIST_MIN_MS = 250;
+
+let redis = null;
+const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+if (REDIS_URL && REDIS_TOKEN) {
+  try {
+    const { Redis } = require('@upstash/redis');
+    redis = new Redis({ url: REDIS_URL, token: REDIS_TOKEN });
+  } catch (_) { redis = null; }
+}
+
+const REDIS_STATE_KEY = 'gt:state';
+const REDIS_SETTINGS_KEY = 'gt:settings';
+
+const DEFAULT_SETTINGS = {
+  gemsPerWl: 2200,   // 1 WL = 2200 gems (1 DL = 220k gems = 100 WL)
+  dlPerWl: 100,
+  bglPerWl: 10000,
+  gemsDropPercent: 5,
+  onlineTtlMs: 90000,    // 90 detik — bot kirim tiap 10s, miss 9x baru stale
+  staleTtlMs: 300000,    // 5 menit — baru offline setelah 5 menit ga ada kabar
+  offlineArchiveMs: 24 * 3600 * 1000,
+  stuckMinutes: 5,       // 5 menit tidak ada progres = terdeteksi stuck
+  globalTargetGems: 100000000,
+  discordWebhookUrl: '',
+  alertOnOffline: true,
+  alertOnDuplicate: true,
+  alertOnGemsDrop: true,
+  alertOnRestart: false,
+  fonnteToken: 'J458dV68YKaGXJ6h3bPJ',
+  fonnteTarget: '120363429381553519@g.us',
+  fonnteAlertStuck: true,
+  fonnteHourlyReport: true,
+};
+
+let lastRead = 0;
+let lastPersist = 0;
+
+const workers = new Map();
+const tombstones = new Map();
+const events = [];
+let settings = { ...DEFAULT_SETTINGS };
+
+function adoptRemote(remote) {
+  if (!remote || !remote.workers) return;
+  if (remote.tombstones) {
+    for (const [uid, ts] of Object.entries(remote.tombstones)) {
+      const local = tombstones.get(uid) || 0;
+      if (ts > local) tombstones.set(uid, ts);
+    }
+  }
+  for (const [uid, rw] of Object.entries(remote.workers)) {
+    const dead = tombstones.get(uid) || 0;
+    if (dead && (rw.lastSeen || 0) <= dead) continue;
+    const lw = workers.get(uid);
+    if (!lw || (rw.lastSeen || 0) > (lw.lastSeen || 0)) workers.set(uid, rw);
+  }
+  if (remote.lastHourlyReportTs && remote.lastHourlyReportTs > lastHourlyReportTs) {
+    lastHourlyReportTs = remote.lastHourlyReportTs;
+  }
+  if (Array.isArray(remote.events)) {
+    const seen = new Set(events.map(e => e.ts + '|' + e.userId + '|' + e.type));
+    for (const e of remote.events) {
+      const k = e.ts + '|' + e.userId + '|' + e.type;
+      if (!seen.has(k)) { events.push(e); seen.add(k); }
+    }
+    events.sort((a, b) => b.ts - a.ts);
+    if (events.length > MAX_EVENTS) events.length = MAX_EVENTS;
+  }
+}
+
+async function refreshState(force) {
+  const now = Date.now();
+  if (!force && now - lastRead < READ_CACHE_MS) return;
+  lastRead = now;
+
+  if (redis) {
+    try {
+      const [remoteState, remoteSettings] = await Promise.all([
+        redis.get(REDIS_STATE_KEY),
+        redis.get(REDIS_SETTINGS_KEY),
+      ]);
+      if (remoteState) adoptRemote(typeof remoteState === 'string' ? JSON.parse(remoteState) : remoteState);
+      if (remoteSettings) settings = { ...DEFAULT_SETTINGS, ...(typeof remoteSettings === 'string' ? JSON.parse(remoteSettings) : remoteSettings) };
+      return;
+    } catch (err) {
+      console.error('[REDIS_READ_ERR]', err.message);
+    }
+  }
+
+  // Fallback lokal /tmp
+  try {
+    if (fs.existsSync(TMP_FILE)) {
+      const p = JSON.parse(fs.readFileSync(TMP_FILE, 'utf8'));
+      adoptRemote(p);
+      if (p.settings) settings = { ...DEFAULT_SETTINGS, ...p.settings };
+    }
+  } catch (_) {}
+}
+
+async function loadSettings() {
+  if (redis) {
+    try {
+      const cfg = await redis.get(REDIS_SETTINGS_KEY);
+      if (cfg) settings = { ...DEFAULT_SETTINGS, ...(typeof cfg === 'string' ? JSON.parse(cfg) : cfg) };
+      return;
+    } catch (_) {}
+  }
+}
+
+async function persistState() {
+  const now = Date.now();
+  lastPersist = now;
+  const obj = {}; for (const [k, v] of workers.entries()) obj[k] = v;
+  const payload = {
+    workers: obj,
+    tombstones: Object.fromEntries(tombstones),
+    events: events.slice(0, MAX_EVENTS),
+    lastHourlyReportTs,
+    savedAt: now
+  };
+
+  if (redis) {
+    try {
+      await redis.set(REDIS_STATE_KEY, JSON.stringify(payload));
+      return true;
+    } catch (err) {
+      console.error('[REDIS_WRITE_ERR]', err.message);
+    }
+  }
+
+  // Fallback /tmp
+  try {
+    fs.writeFileSync(TMP_FILE, JSON.stringify({ ...payload, settings }));
+  } catch (_) {}
+  return true;
+}
+
+async function saveSettings() {
+  if (redis) {
+    try {
+      await redis.set(REDIS_SETTINGS_KEY, JSON.stringify(settings));
+    } catch (_) {}
+  }
+  return persistState();
+}
+
+
+const REJECTS_LIMIT = 50;
+const rejectedHeartbeats = [];
+const rejectedCounts = new Map();
+
+function recordReject(reason, payload, extra = {}) {
+  const uid = String(payload?.userID ?? payload?.userId ?? payload?.user_id ?? payload?.bot_id ?? payload?.name ?? 'unknown');
+  rejectedCounts.set(uid, (rejectedCounts.get(uid) || 0) + 1);
+  rejectedHeartbeats.unshift({
+    ts: Date.now(),
+    reason,
+    userId: payload?.userID ?? payload?.userId ?? payload?.user_id ?? payload?.bot_id ?? payload?.name ?? 'unknown',
+    name: payload?.name ?? payload?.bot_id ?? 'unknown',
+    instanceId: payload?.instanceId ?? payload?.instance_id ?? 'legacy',
+    seq: payload?.seq ?? 0,
+    ...extra,
+  });
+  if (rejectedHeartbeats.length > REJECTS_LIMIT) rejectedHeartbeats.length = REJECTS_LIMIT;
+}
+
+function flush() {
+  return persistState();
+}
+
+// =============================================================
+//  KONSTANTA
+// =============================================================
+const DUP_WINDOW_MS = 10000;
+const MAX_HISTORY = 720;
+const RATE_WINDOW = 20;
+const MAX_EVENTS = 300;
+
+function ttlOnline() { return Number(settings.onlineTtlMs) || 90000; }
+function ttlStale() { return Number(settings.staleTtlMs) || 300000; }
+
+function stateFor(diffMs) {
+  if (diffMs > ttlStale()) return 'OFFLINE';
+  if (diffMs > ttlOnline()) return 'STALE';
+  return 'ONLINE';
+}
+
+// =============================================================
+//  SHARED MAGPLANT REGISTRY (Redis Hash Storage + Heuristic)
+// =============================================================
+const REDIS_MAG_HASH = 'gt:mag';
+const KNOWN_ITEMS = {
+  16706: 'POG Block',
+  5640: 'Pepper Tree',
+  4585: 'Laser Grid',
+  3004: 'Chandelier',
+  880: 'Blackrock Grid',
+};
+
+// Reset seluruh data magplant
+async function clearAllMagplants() {
+  if (redis) {
+    try {
+      await redis.del(REDIS_MAG_HASH);
+    } catch (e) {
+      console.error('[MAG_CLEAR_ERR]', e.message);
+    }
+  }
+  return { ok: true };
+}
+
+// Ambil seluruh magplant dari Redis hash
+async function loadAllMagplants() {
+  const map = new Map();
+  if (!redis) return map;
+  try {
+    const raw = await redis.hgetall(REDIS_MAG_HASH);
+    if (raw && typeof raw === 'object') {
+      for (const [k, v] of Object.entries(raw)) {
+        try {
+          const item = typeof v === 'string' ? JSON.parse(v) : v;
+          if (item && item.world) map.set(k, item);
+        } catch (_) {}
+      }
+    }
+  } catch (e) {
+    console.error('[MAG_HGETALL_ERR]', e.message);
+  }
+  return map;
+}
+
+// Lapor kondisi magplant (hasil scan dialog atau pemakaian bot)
+async function reportMagplant({ world, x, y, itemId = 16706, itemName = null, count = null, empty = false, botName = 'unknown', ttlSec = 300 }) {
+  if (!world || x == null || y == null) return null;
+  world = String(world).toUpperCase().trim();
+  x = Number(x); y = Number(y);
+  const idNum = Number(itemId) || 16706;
+  const resolvedName = itemName || KNOWN_ITEMS[idNum] || `Item #${idNum}`;
+  const key = `${world}:${x}:${y}`;
+  const now = Date.now();
+
+  let existing = null;
+  if (redis) {
+    try {
+      const prevRaw = await redis.hget(REDIS_MAG_HASH, key);
+      if (prevRaw) existing = typeof prevRaw === 'string' ? JSON.parse(prevRaw) : prevRaw;
+    } catch (_) {}
+  }
+
+  const isCountKnown = count !== null && count !== undefined && !isNaN(Number(count));
+  const numericCount = isCountKnown ? Number(count) : null;
+  const isEmpty = Boolean(empty || (numericCount !== null && numericCount <= 0));
+
+  const updated = {
+    world,
+    x,
+    y,
+    itemId: idNum,
+    itemName: resolvedName,
+    count: isEmpty ? 0 : (isCountKnown ? numericCount : (existing ? existing.count : null)),
+    isCountEstimated: !isCountKnown,
+    empty: isEmpty,
+    emptyUntil: isEmpty ? (now + (Number(ttlSec) || 300) * 1000) : 0,
+    lastScannedAt: now,
+    lastScannedBy: botName,
+    visitCount: ((existing && existing.visitCount) || 0) + 1,
+    emptyCount: isEmpty ? (((existing && existing.emptyCount) || 0) + 1) : 0,
+    reservedBots: (existing && existing.reservedBots ? existing.reservedBots : []).filter(b => b.name !== botName),
+  };
+
+  if (redis) {
+    try {
+      await redis.hset(REDIS_MAG_HASH, { [key]: JSON.stringify(updated) });
+    } catch (e) {
+      console.error('[MAG_HSET_ERR]', e.message);
+    }
+  }
+  return updated;
+}
+
+// Rekomendasi Magplant Heuristik Transparan
+async function recommendBestMagplant({ botName = 'bot', currentWorld = '', currentX = null, currentY = null, itemId = null }) {
+  const map = await loadAllMagplants();
+  const now = Date.now();
+  currentWorld = String(currentWorld || '').toUpperCase().trim();
+
+  const candidates = [];
+  for (const [key, mag] of map.entries()) {
+    if (itemId && mag.itemId && Number(mag.itemId) !== Number(itemId)) continue;
+
+    const ageMin = Math.max(0, (now - (mag.lastScannedAt || now)) / 60000);
+    const activeReservations = (mag.reservedBots || []).filter(r => (now - (r.ts || 0)) < 180000);
+
+    const isCooldownActive = mag.empty && (mag.emptyUntil > now);
+    const isNeedsRecheck = mag.empty && !isCooldownActive;
+
+    // Base score
+    let base = 0;
+    let status = 'AVAILABLE';
+
+    if (isCooldownActive) {
+      status = 'EMPTY_COOLDOWN';
+      base = -9999; // Dilarang pakai selama masa cooldown
+    } else if (isNeedsRecheck) {
+      status = 'NEEDS_RECHECK';
+      base = 300; // Poin moderat untuk dicek ulang siapa tahu sudah di-restock
+    } else if (mag.count !== null && mag.count !== undefined) {
+      status = 'AVAILABLE';
+      base = Number(mag.count);
+    } else {
+      status = 'UNKNOWN_STOCK';
+      base = 500; // Stok siap pakai tapi angka persis belum ter-parse
+    }
+
+    // Penalti umur data (makin tua datanya, makin berkurang kepastian)
+    const agePenalty = Math.min(200, Math.round(ageMin * 5));
+
+    // Loyalty bonus (anti-spam gonta-ganti remote)
+    let loyaltyBonus = 0;
+    if (currentWorld && mag.world === currentWorld) {
+      loyaltyBonus += 400; // Bonus di world yang sama
+      if (currentX != null && currentY != null) {
+        const dist = Math.abs(Number(currentX) - Number(mag.x)) + Math.abs(Number(currentY) - Number(mag.y));
+        if (dist <= 3) loyaltyBonus += 300;
+        else loyaltyBonus -= Math.min(150, dist * 3);
+      }
+    } else {
+      loyaltyBonus -= 600; // Penalti pindah world
+    }
+
+    // Penalti tabrakan bot lain
+    const otherBots = activeReservations.filter(r => r.name !== botName).length;
+    const congestionPenalty = otherBots * 1500;
+
+    const totalScore = isCooldownActive ? -9999 : (base - agePenalty + loyaltyBonus - congestionPenalty);
+
+    candidates.push({
+      key,
+      world: mag.world,
+      x: mag.x,
+      y: mag.y,
+      itemId: mag.itemId,
+      itemName: mag.itemName,
+      count: mag.count,
+      isCountEstimated: mag.isCountEstimated,
+      status,
+      ageMin: Math.round(ageMin * 10) / 10,
+      activeBots: activeReservations.map(r => r.name),
+      score: totalScore,
+    });
+  }
+
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+
+  // Kunci reservasi ringan di Redis
+  if (redis && best.score > -9000) {
+    try {
+      const item = map.get(best.key);
+      if (item) {
+        const list = (item.reservedBots || []).filter(r => r.name !== botName);
+        list.push({ name: botName, ts: now });
+        item.reservedBots = list;
+        await redis.hset(REDIS_MAG_HASH, { [best.key]: JSON.stringify(item) });
+      }
+    } catch (_) {}
+  }
+
+  return {
+    recommendation: best,
+    allCandidates: candidates.slice(0, 15),
+  };
+}
+
+// Lepas reservasi bot
+async function releaseMagplantReservation(botName, key = null) {
+  if (!redis) return { ok: true };
+  const map = await loadAllMagplants();
+  for (const [k, item] of map.entries()) {
+    if (key && k !== key) continue;
+    const prevLen = (item.reservedBots || []).length;
+    item.reservedBots = (item.reservedBots || []).filter(r => r.name !== botName);
+    if (item.reservedBots.length !== prevLen) {
+      try {
+        await redis.hset(REDIS_MAG_HASH, { [k]: JSON.stringify(item) });
+      } catch (_) {}
+    }
+  }
+  return { ok: true };
+}
+
+// =============================================================
+//  FONNTE WHATSAPP NOTIFICATIONS
+// =============================================================
+let lastHourlyReportTs = 0;
+const botStuckAlerted = new Map(); // userId -> lastAlertTs
+const botRentAlerted = new Map(); // userId -> lastAlertTs
+
+function fmtSec(sec) {
+  if (sec == null || sec < 0) return '—';
+  if (sec === 0) return 'Habis';
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m ${s}s`;
+}
+
+async function sendFonnte(message) {
+  const token = String(settings.fonnteToken || DEFAULT_SETTINGS.fonnteToken || '').trim();
+  const target = String(settings.fonnteTarget || DEFAULT_SETTINGS.fonnteTarget || '').trim();
+  if (!token || !target) return false;
+  try {
+    const params = new URLSearchParams();
+    params.append('target', target);
+    params.append('message', message);
+    const res = await fetch('https://api.fonnte.com/send', {
+      method: 'POST',
+      headers: {
+        'Authorization': token,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params.toString(),
+    });
+    const r = await res.json();
+    console.log('[FONNTE_SEND_RESULT]', JSON.stringify(r));
+    return !!(r && r.status);
+  } catch (err) {
+    console.error('Fonnte send error:', err.message);
+    return false;
+  }
+}
+
+async function triggerHourlyReport(now = Date.now(), passedFleet = null) {
+  const fleet = passedFleet || computeFleet(now);
+  const s = fleet.summary;
+
+  // HARD GUARD ANTI-SPAM & ANTI-TOKEN HABIS:
+  // Jangan pernah kirim laporan jika bot 0 atau rate masih 0 (container kosong/cold-start)
+  if (!fleet.bots || fleet.bots.length === 0) {
+    console.warn('[FONNTE] Batal kirim: bot 0 / state kosong');
+    return false;
+  }
+  const hasLiveBots = fleet.bots.some(b => b.state === 'ONLINE' || b.state === 'STALE');
+  if (!hasLiveBots) {
+    console.warn('[FONNTE] Batal kirim: tidak ada bot online');
+    return false;
+  }
+  const totalRate = (s.totalGemsPerHour || 0) + (s.totalWlPerHour || 0);
+  if (totalRate <= 0) {
+    console.warn('[FONNTE] Batal kirim: laju farming masih 0 (s.totalGemsPerHour=' + s.totalGemsPerHour + ', s.totalWlPerHour=' + s.totalWlPerHour + ')');
+    return false;
+  }
+
+  const dateStr = new Date(now + 7 * 3600 * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' WIB';
+
+  let botListTxt = '';
+  for (const b of fleet.bots) {
+    const rateWL = b.wlPerHour ? b.wlPerHour.toLocaleString() : '0';
+    const rateGems = ((b.ratePerHour || 0) / 1e6).toFixed(2);
+    let rentLine = '';
+    if ((b.paywallRemSec != null && b.paywallRemSec >= 0) || (b.rentRemSec != null && b.rentRemSec >= 0)) {
+      const pwTxt = (b.paywallRemSec != null && b.paywallRemSec >= 0) ? fmtSec(b.paywallRemSec) : '—';
+      const rentTxt = (b.rentRemSec != null && b.rentRemSec >= 0) ? `${fmtSec(b.rentRemSec)} (${b.rentEquipped ? 'Dipakai' : 'Lepas'})` : '—';
+      rentLine = `  └ 🚪 Paywall: ${pwTxt} | 🗡️ Mray: ${rentTxt}\n`;
+    }
+    botListTxt += `• *${b.name}* [${b.state}] di *${b.world}*\n`
+      + `  └ Gems: ${((b.gems || 0)/1e6).toFixed(2)}M | Rate: ${rateGems}M/h (≈ ${rateWL} WL/h)\n`
+      + `  └ Inv: ${b.wlInv||0} WL / ${b.dl||0} DL / ${b.bgl||0} BGL\n`
+      + rentLine;
+  }
+
+  const reportMsg = `📊 *[GT FLEET MONITOR — LAPORAN PER JAM]*\n`
+    + `🕒 *Waktu:* ${dateStr}\n`
+    + `🤖 *Armada:* ${s.online}/${s.totalBots} Online (${s.stale} Stale, ${s.offline} Offline)\n\n`
+    + `💰 *Total Kekayaan Fleet:*\n`
+    + `• Gems: *${((s.totalGems || 0)/1e6).toFixed(2)}M*\n`
+    + `• Nilai Total WL: *${(s.totalWealthWl||0).toLocaleString()} WL* (≈ ${((s.totalWealthWl||0)/100).toFixed(1)} DL)\n`
+    + `• Inventori: *${s.totalWlInv||0} WL | ${s.totalDl||0} DL | ${s.totalBgl||0} BGL*\n\n`
+    + `⚡ *Laju Farming:*\n`
+    + `• Gems/Jam: *${((s.totalGemsPerHour||0)/1e6).toFixed(2)}M/h*\n`
+    + `• Lock/Jam: *${(s.totalWlPerHour||0).toLocaleString()} WL/h* (≈ ${s.totalDlPerHour||0} DL/h)\n`
+    + `• Proyeksi 24 Jam: *${((s.projection24h||0)/1e6).toFixed(1)}M gems* (≈ ${(s.projection24hWl||0).toLocaleString()} WL)\n\n`
+    + `📋 *Status Bot:*\n${botListTxt || '— (Belum ada bot terdaftar)'}\n\n`
+    + `🌐 *Dashboard:* https://gt-pi-ten.vercel.app`;
+
+  return sendFonnte(reportMsg);
+}
+
+function checkAndAlertStuck(userId, name, world, currentGems, wlInv, dl, bgl, totalWealthWl, isBotStuck, now) {
+  if (isBotStuck && (settings.fonnteAlertStuck ?? true)) {
+    const lastAlert = botStuckAlerted.get(userId) || 0;
+    // Cooldown 10 menit per bot (kirim instan begitu stuck 5 menit, ingatkan tiap 10 menit jika belum dibenerin)
+    if (now - lastAlert > 10 * 60 * 1000) {
+      botStuckAlerted.set(userId, now);
+      const stuckMin = Number(settings.stuckMinutes) || 5;
+      const msg = `⚠️ *[GT ALERT] BOT STUCK!*\n\n`
+        + `🤖 Bot: *${name}* (ID: ${userId})\n`
+        + `🌍 World: *${world}*\n`
+        + `💎 Gems: *${(currentGems/1e6).toFixed(2)}M*\n`
+        + `🔒 Inv: *${wlInv} WL | ${dl} DL | ${bgl} BGL*\n`
+        + `💰 Total Wealth: *${totalWealthWl.toLocaleString()} WL*\n\n`
+        + `⏱ *Kondisi:* Bot terdeteksi stuck (tidak ada kenaikan kekayaan selama ${stuckMin} menit).\n`
+        + `Segera periksa bot Anda di game!`;
+      console.warn(`[STUCK_ALERT] Mengirim alert stuck instan untuk ${name} (${userId})`);
+      sendFonnte(msg).catch(() => {});
+    }
+  } else if (!isBotStuck) {
+    // Reset status alert jika bot sudah bergerak dan menghasilkan progres lagi
+    botStuckAlerted.delete(userId);
+  }
+}
+
+function checkAndAlertRent(userId, name, world, paywallRemSec, rentRemSec, rentEquipped, now) {
+  if (paywallRemSec == null && rentRemSec == null) return;
+  const lastAlert = botRentAlerted.get(userId) || 0;
+  // Cooldown 15 menit per bot
+  if (now - lastAlert < 15 * 60 * 1000) return;
+
+  let alertReasons = [];
+  if (paywallRemSec != null && paywallRemSec >= 0 && paywallRemSec <= 180) {
+    alertReasons.push(`🚪 *Paywall BFG:* Sisa waktu ${fmtSec(paywallRemSec)} (hampir habis/habis)!`);
+  }
+  if (rentRemSec != null && rentRemSec >= 0 && rentRemSec <= 180) {
+    alertReasons.push(`🗡️ *Sewa Mray:* Sisa waktu ${fmtSec(rentRemSec)} (hampir habis/habis)!`);
+  }
+  if (rentRemSec != null && rentRemSec > 0 && !rentEquipped) {
+    alertReasons.push(`⚠️ *Sewa Mray:* Ada durasi sewa (${fmtSec(rentRemSec)}) tapi barang *LEPAS/TIDAK DIPAKAI*!`);
+  }
+
+  if (alertReasons.length > 0) {
+    botRentAlerted.set(userId, now);
+    const msg = `⚠️ *[GT ALERT] PERINGATAN SEWA BOT!*\n\n`
+      + `🤖 Bot: *${name}* (ID: ${userId})\n`
+      + `🌍 World: *${world}*\n\n`
+      + alertReasons.map(r => `• ${r}`).join('\n')
+      + `\n\nSegera cek bot Anda di game!`;
+    console.warn(`[RENT_ALERT] Mengirim alert sewa untuk ${name} (${userId})`);
+    sendFonnte(msg).catch(() => {});
+  }
+}
+
+// =============================================================
+//  EVENTS
+// =============================================================
+function pushEvent(type, userId, userName, msg, extra = {}) {
+  events.unshift({
+    ts: Date.now(),
+    type,
+    userId: String(userId),
+    userName: userName || '',
+    msg,
+    ...extra,
+  });
+  if (events.length > MAX_EVENTS) events.length = MAX_EVENTS;
+  return events[0];
+}
+
+// =============================================================
+//  RUMUS TUNGGAL RATE & KEKAYAAN (Single Source of Truth)
+// =============================================================
+function calcRatesAndWealth(history, currentGems, dl = 0, bgl = 0, curSettings = settings, wlInv = 0, prevRate = 0) {
+  // Normalisasi di owning boundary: satu field waktu = ts
+  history = history.map(h => h.ts !== undefined ? h : { ts: h.time, gems: h.gems });
+  const n = history.length;
+  const now = n > 0 ? history[n - 1].ts : Date.now();
+
+  const gemsPerWl = Number(curSettings.gemsPerWl) || 2200;
+  const dlPerWl = Number(curSettings.dlPerWl) || 100;
+  const bglPerWl = Number(curSettings.bglPerWl) || 10000;
+
+  // Hitung total kekayaan (WL) dari sebuah sample — basis utama tracking
+  // Gunakan dl/bgl dari sample jika tersedia (sample baru), fallback ke nilai saat ini
+  const toWl = (h) => {
+    const hDl = h.dl !== undefined ? h.dl : dl;
+    const hBgl = h.bgl !== undefined ? h.bgl : bgl;
+    const hWl = h.wl !== undefined ? h.wl : wlInv;
+    return (h.gems || 0) / gemsPerWl + hWl + hDl * dlPerWl + hBgl * bglPerWl;
+  };
+  const currentWealthWl = (currentGems / gemsPerWl) + wlInv + dl * dlPerWl + bgl * bglPerWl;
+
+  // Rate WL/menit dari window pendek (RATE_WINDOW sample terakhir)
+  let wlPerMin = 0;
+  if (n >= 2) {
+    const win = history.slice(-RATE_WINDOW);
+    const oldest = win[0];
+    const newest = win[win.length - 1];
+    const dMin = (newest.ts - oldest.ts) / 60000;
+    if (dMin > 0) {
+      const delta = toWl(newest) - toWl(oldest);
+      if (delta > 0) wlPerMin = delta / dMin;
+    }
+    // Fallback: cari window lebih panjang jika jendela pendek flat
+    if (wlPerMin === 0) {
+      for (let i = history.length - 2; i >= 0; i--) {
+        const h = history[i];
+        const gapMin = (now - h.ts) / 60000;
+        if (gapMin > 15) break;
+        const delta = currentWealthWl - toWl(h);
+        if (delta > 0 && gapMin > 0.2) {
+          wlPerMin = delta / gapMin;
+          break;
+        }
+      }
+    }
+  }
+
+  // Fallback ke prevRate (dalam gems/min) jika tidak ada delta positif (bot lagi jalan/sync)
+  // Konversi prevRate gems/min -> WL/min
+  if (wlPerMin === 0 && prevRate > 0) wlPerMin = prevRate / gemsPerWl;
+
+  // Rate gems/menit dari wlPerMin (untuk kompatibilitas display)
+  const perMin = Math.round(wlPerMin * gemsPerWl);
+  const per30m = Math.round(wlPerMin * 30 * gemsPerWl);
+  const perHour = Math.round(wlPerMin * 60 * gemsPerWl);
+
+  // Rate dalam WL/jam dan DL/jam
+  const wlPerHour = wlPerMin * 60;
+  const dlPerHour = wlPerHour / dlPerWl;
+
+  const wlEquivalentFromGems = currentGems / gemsPerWl;
+  const totalWealthWl = Math.round(currentWealthWl);
+
+  return {
+    perMin,
+    per30m,
+    perHour,
+    projection24h: perHour * 24,
+    wlPerMin: Math.round(wlPerMin * 100) / 100,
+    wlPerHour: Math.round(wlPerHour * 10) / 10,
+    dlPerHour: Math.round(dlPerHour * 100) / 100,
+    wlEquivalentFromGems,
+    wlInventory: wlInv,
+    totalWealthWl,
+  };
+}
+
+// =============================================================
+//  HEARTBEAT PROCESSOR (Atomic Upsert per userId)
+// =============================================================
+async function processHeartbeat(payload) {
+  const now = Date.now();
+
+  if (!payload || typeof payload !== 'object') {
+    recordReject('EMPTY_OR_INVALID_BODY', payload);
+    return { ok: false, error: 'INVALID_PAYLOAD' };
+  }
+
+  const rawId = payload.userID ?? payload.userId ?? payload.user_id ?? payload.bot_id ?? payload.name;
+  if (!rawId) {
+    recordReject('MISSING_USER_ID', payload);
+    return { ok: false, error: 'MISSING_USER_ID' };
+  }
+
+  const userId = String(rawId);
+  const name = String(payload.name || payload.bot_id || `Bot-${userId}`);
+  const hasSeq = payload.seq !== undefined && payload.seq !== null && payload.seq !== '';
+  const isLegacy = !payload.instanceId && !payload.instance_id && !hasSeq;
+  const instanceId = String(payload.instanceId || payload.instance_id || 'legacy');
+  const seq = hasSeq ? Number(payload.seq) : 0;
+
+  const prev = workers.get(userId);
+
+  // Bot yang dihapus admin: abaikan heartbeat basi (mis. request in-flight),
+  // tapi heartbeat datang SETELAH waktu hapus = bot benar-benar hidup lagi.
+  const deadAt = tombstones.get(userId) || 0;
+  if (deadAt && now <= deadAt + 5000) {
+    recordReject('DELETED_RECENTLY', payload, { deletedAt: deadAt });
+    return { ok: true, ignored: true, reason: 'deleted-recently' };
+  }
+
+  // Tolak seq mundur / replay untuk instance yang sama
+  if (!isLegacy && hasSeq && prev && prev.instanceId === instanceId && prev.seq && seq <= prev.seq) {
+    recordReject('OUT_OF_ORDER_SEQ', payload, { incomingSeq: seq, storedSeq: prev.seq });
+    return { ok: true, ignored: true, reason: 'out-of-order' };
+  }
+
+  // Deteksi multi-instance
+  let instanceHistory = prev ? (prev.instanceHistory || []) : [];
+  instanceHistory = instanceHistory.filter(i => (now - i.ts) <= DUP_WINDOW_MS);
+  const known = instanceHistory.find(i => i.id === instanceId);
+  if (known) known.ts = now;
+  else instanceHistory.push({ id: instanceId, ts: now });
+  const duplicate = instanceHistory.length > 1;
+
+  let restartCount = prev ? (prev.restartCount || 0) : 0;
+  let isRestart = false;
+  if (prev && prev.instanceId && prev.instanceId !== instanceId && !isLegacy) {
+    restartCount += 1;
+    isRestart = true;
+  }
+
+  // Field opsional: jangan timpa nilai lama dengan 0 hanya karena bot tidak mengirim
+  const has = (k) => payload[k] !== undefined && payload[k] !== null && payload[k] !== '';
+  const world = has('world') ? String(payload.world)
+    : has('current_world') ? String(payload.current_world)
+    : (prev && prev.world) || '—';
+  const currentGems = has('gems') ? Number(payload.gems) : has('bux') ? Number(payload.bux) : (prev ? prev.gems : 0);
+  const dl = has('dl') ? Number(payload.dl) : (prev ? prev.dl || 0 : 0);
+  const bgl = has('bgl') ? Number(payload.bgl) : (prev ? prev.bgl || 0 : 0);
+  const wlInv = has('wl') ? Number(payload.wl) : has('wls') ? Number(payload.wls) : (prev ? prev.wlInv || 0 : 0);
+  const history = prev ? (prev.history || []).slice() : [];
+  history.push({ ts: now, gems: currentGems, dl, bgl, wl: wlInv });
+  if (history.length > MAX_HISTORY) history.shift();
+  const prevRate = (prev && prev.ratePerMin) || 0;
+  const mathData = calcRatesAndWealth(history, currentGems, dl, bgl, settings, wlInv, prevRate);
+
+  // Normalisasi uptime
+  let uptime = '—';
+  if (typeof payload.uptime === 'string' && payload.uptime.trim()) {
+    uptime = payload.uptime.trim();
+  } else if (Number.isFinite(Number(payload.uptimeSec ?? payload.uptime))) {
+    const s = Math.floor(Number(payload.uptimeSec ?? payload.uptime));
+    uptime = s > 0 ? `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m` : '0m';
+  }
+
+  // Event online / register
+  if (prev) {
+    const prevState = prev.lastState || stateFor(now - (prev.lastSeen || 0));
+    if (prevState !== 'ONLINE') {
+      const dt = Math.round((now - (prev.lastSeen || now)) / 1000);
+      pushEvent('online', userId, name, `Online kembali setelah ${dt}s (sebelumnya ${prevState})`);
+    }
+  } else {
+    pushEvent('registered', userId, name, 'Bot baru terdaftar');
+  }
+
+  if (isRestart) {
+    pushEvent('restarted', userId, name, `Restart terdeteksi (instance ${instanceId.slice(0, 8)}…)`);
+  }
+  if (duplicate && !(prev && prev.duplicate)) {
+    pushEvent('duplicate', userId, name, `Duplikat: ${instanceHistory.length} instance aktif`);
+  }
+  if (prev && prev.world && prev.world !== world) {
+    pushEvent('world', userId, name, `Pindah world: ${prev.world} → ${world}`);
+  }
+
+  // Health Score & Signals
+  let signalsCount = 2; // base: status, gems
+  let healthScore = 100;
+  if (prev && prev.gems > currentGems) healthScore -= 15;
+  if (mathData.perMin === 0 && prev) healthScore -= 20;
+  if (duplicate) { healthScore -= 25; signalsCount += 1; }
+  if (isLegacy) { healthScore -= 5; signalsCount += 1; }
+  healthScore = Math.max(0, Math.min(100, healthScore));
+
+  // Nullable metrics
+  const pingMs = payload.pingMs !== undefined ? Number(payload.pingMs) : (payload.ping !== undefined ? Number(payload.ping) : null);
+  const backpackUsed = payload.backpackUsed ?? payload.backpack_used ?? null;
+  const backpackTotal = payload.backpackTotal ?? payload.backpack_total ?? null;
+
+  const updated = {
+    userId,
+    name,
+    instanceId,
+    seq,
+    isLegacy,
+    duplicate,
+    restartCount,
+    instanceHistory,
+    history,
+    world,
+    activity: String(payload.activity || payload.status || 'Farming'),
+    level: Number(payload.level || 1),
+    gems: currentGems,
+    dl,
+    bgl,
+    wlInv,
+    backpackUsed: backpackUsed !== null ? Number(backpackUsed) : null,
+    backpackTotal: backpackTotal !== null ? Number(backpackTotal) : null,
+    pingMs: pingMs !== null && pingMs >= 0 ? pingMs : null,
+    uptime,
+    disconnects: Number(payload.disconnects || 0),
+    // Durasi sewa Paywall & Mray
+    paywallRemSec: payload.paywallRemSec !== undefined ? Number(payload.paywallRemSec) : (prev ? (prev.paywallRemSec ?? -1) : -1),
+    rentRemSec: payload.rentRemSec !== undefined ? Number(payload.rentRemSec) : (prev ? (prev.rentRemSec ?? -1) : -1),
+    rentEquipped: payload.rentEquipped !== undefined ? Boolean(payload.rentEquipped) : (prev ? (prev.rentEquipped ?? false) : false),
+    autoPaywall: payload.autoPaywall !== undefined ? Boolean(payload.autoPaywall) : (prev ? (prev.autoPaywall ?? false) : false),
+    autoRent: payload.autoRent !== undefined ? Boolean(payload.autoRent) : (prev ? (prev.autoRent ?? false) : false),
+    ratePerMin: mathData.perMin,
+    ratePer30m: mathData.per30m,
+    ratePerHour: mathData.perHour,
+    wlPerMin: mathData.wlPerMin,
+    wlPerHour: mathData.wlPerHour,
+    dlPerHour: mathData.dlPerHour,
+    projection24h: mathData.projection24h,
+    wealthWl: mathData.totalWealthWl,
+    wlEquivalentFromGems: mathData.wlEquivalentFromGems,
+    healthScore,
+    healthSignalsCount: signalsCount,
+    lastState: 'ONLINE',
+    lastSeen: now,
+  };
+
+  workers.set(userId, updated);
+  await flush();
+
+  // Auto-ingest Magplant Reports dari bot jika ada
+  if (Array.isArray(payload.magReports) && payload.magReports.length > 0) {
+    for (const mr of payload.magReports) {
+      if (mr && mr.x != null && mr.y != null) {
+        const isEmp = Boolean(mr.empty);
+        const parsedCount = mr.count !== null && mr.count !== undefined && !isNaN(Number(mr.count)) ? Number(mr.count) : null;
+        reportMagplant({
+          world,
+          x: mr.x,
+          y: mr.y,
+          itemId: mr.itemId || 16706,
+          itemName: mr.itemName || null,
+          count: isEmp ? 0 : parsedCount,
+          empty: isEmp,
+          ttlSec: mr.ttl || 300,
+          botName: name,
+        }).catch(err => console.error('[MAG_AUTO_INGEST_ERR]', err.message));
+      }
+    }
+  }
+
+  // Evaluasi Stuck Alert ke WhatsApp GC
+  try {
+    const stuckMin = Number(settings.stuckMinutes) || 10;
+    const gemsPerWl = Number(settings.gemsPerWl) || 2200;
+    const dlPerWl = Number(settings.dlPerWl) || 100;
+    const bglPerWl = Number(settings.bglPerWl) || 10000;
+    const toWl = (h) => (h.gems || 0) / gemsPerWl + ((h.dl !== undefined ? h.dl : dl) * dlPerWl) + ((h.bgl !== undefined ? h.bgl : bgl) * bglPerWl);
+    const cut = now - stuckMin * 60000;
+    const inWin = (history || []).filter((h) => h.ts >= cut);
+    const isBotStuck = inWin.length >= 2 && toWl(inWin[inWin.length - 1]) <= toWl(inWin[0]);
+    checkAndAlertStuck(userId, name, world, currentGems, wlInv, dl, bgl, mathData.totalWealthWl, isBotStuck, now);
+    checkAndAlertRent(userId, name, world, updated.paywallRemSec, updated.rentRemSec, updated.rentEquipped, now);
+  } catch (_) {}
+
+  // Laporan Rutin per 1 Jam (3600000 ms) ke WhatsApp GC
+  try {
+    const elapsed = now - (lastHourlyReportTs || 0);
+    if ((settings.fonnteHourlyReport ?? true) && elapsed >= 3600000) {
+      const preFleet = computeFleet();
+      const hasPositiveRate = preFleet.bots.some(b => (b.ratePerHour || 0) > 0 || (b.wlPerHour || 0) > 0);
+      if (hasPositiveRate) {
+        lastHourlyReportTs = now;
+        await persistState();
+        triggerHourlyReport(now, preFleet).catch(() => {});
+      }
+    }
+  } catch (_) {}
+
+  return { ok: true, status: 'processed', userId, instanceId, seq, isLegacy };
+}
+
+// =============================================================
+//  FLEET AGGREGATION
+// =============================================================
+// Deteksi transisi ONLINE → STALE/OFFLINE saat poll dashboard.
+// Tanpa ini, event "bot offline" tidak pernah tercatat karena
+// tidak ada heartbeat masuk (memang begitu definisi offline).
+function detectStateTransitions() {
+  const now = Date.now();
+  let changed = 0;
+  for (const [userId, w] of workers.entries()) {
+    const state = stateFor(now - (w.lastSeen || 0));
+    const prevState = w.lastState || 'ONLINE';
+    if (prevState !== state) {
+      if (state === 'OFFLINE') {
+        const dt = Math.round((now - (w.lastSeen || now)) / 1000);
+        pushEvent('offline', userId, w.name, `Offline — tidak ada heartbeat ${dt}s`);
+      } else if (state === 'STALE') {
+        const dt = Math.round((now - (w.lastSeen || now)) / 1000);
+        pushEvent('stale', userId, w.name, `Stale — heartbeat terakhir ${dt}s lalu`);
+      }
+      w.lastState = state;
+      changed += 1;
+    }
+  }
+  return changed;
+}
+
+function computeFleet() {
+  const now = Date.now();
+  const bots = [];
+
+  let online = 0, stale = 0, offline = 0;
+  let totalGems = 0, totalDl = 0, totalBgl = 0, totalWlInv = 0;
+  let totalPing = 0, pingCount = 0;
+
+  for (const [userId, w] of workers.entries()) {
+    const diffMs = now - (w.lastSeen || 0);
+    const state = stateFor(diffMs);
+
+    if (state === 'ONLINE') online += 1;
+    else if (state === 'STALE') stale += 1;
+    else offline += 1;
+
+    totalGems += (w.gems || 0);
+    totalDl += (w.dl || 0);
+    totalBgl += (w.bgl || 0);
+    totalWlInv += (w.wlInv || 0);
+
+    if (w.pingMs !== null && w.pingMs > 0) {
+      totalPing += w.pingMs;
+      pingCount += 1;
+    }
+
+    const mathData = calcRatesAndWealth(w.history || [], w.gems || 0, w.dl || 0, w.bgl || 0, settings, w.wlInv || 0, w.ratePerMin || 0);
+
+    // Rate tetap bermakna saat bot ONLINE atau STALE (hanya nol saat benar-benar OFFLINE)
+    const live = state === 'ONLINE' || state === 'STALE';
+    // Fallback cerdas: jika kalkulasi sesaat return 0 tapi bot online dan punya rate sebelumnya, pertahankan
+    const finalRatePerMin = live ? (mathData.perMin || w.ratePerMin || 0) : 0;
+    const finalRatePerHour = live ? (mathData.perHour || w.ratePerHour || 0) : 0;
+    const finalWlPerHour = live ? (mathData.wlPerHour || w.wlPerHour || 0) : 0;
+    const finalDlPerHour = live ? (mathData.dlPerHour || w.dlPerHour || 0) : 0;
+    const finalProjection24h = live ? (mathData.projection24h || (finalRatePerHour * 24)) : 0;
+
+    const stuckMin = Number(settings.stuckMinutes) || 10;
+    let stuck = false;
+    if (live && (w.history || []).length >= 2) {
+      const gemsPerWl = Number(settings.gemsPerWl) || 2200;
+      const dlPerWl = Number(settings.dlPerWl) || 100;
+      const bglPerWl = Number(settings.bglPerWl) || 10000;
+      // Hitung kekayaan total (gems + DL + BGL) agar tidak false-positive saat convert DL/BGL
+      const toWl = (h) => (h.gems || 0) / gemsPerWl + ((h.dl !== undefined ? h.dl : (w.dl || 0)) * dlPerWl) + ((h.bgl !== undefined ? h.bgl : (w.bgl || 0)) * bglPerWl);
+      const cut = now - stuckMin * 60000;
+      const inWin = w.history.filter((h) => h.ts >= cut);
+      if (inWin.length < 2) stuck = false; // Data belum cukup, jangan asal vonis stuck
+      else stuck = toWl(inWin[inWin.length - 1]) <= toWl(inWin[0]);
+    }
+
+    bots.push({
+      userId,
+      name: w.name,
+      instanceId: w.instanceId,
+      seq: w.seq,
+      isLegacy: !!w.isLegacy,
+      state,
+      duplicate: !!w.duplicate,
+      restartCount: w.restartCount || 0,
+      world: w.world,
+      activity: w.activity,
+      level: w.level,
+      gems: w.gems,
+      dl: w.dl,
+      bgl: w.bgl,
+      wlInv: w.wlInv || 0,
+      inventoryWl: Math.round((w.wlInv || 0) + (w.dl || 0) * (Number(settings.dlPerWl) || 100) + (w.bgl || 0) * (Number(settings.bglPerWl) || 10000)),
+      wealthWl: mathData.totalWealthWl,
+      wlEquivalentFromGems: mathData.wlEquivalentFromGems,
+      backpackUsed: w.backpackUsed,
+      backpackTotal: w.backpackTotal,
+      pingMs: w.pingMs,
+      uptime: w.uptime || '—',
+      disconnects: w.disconnects || 0,
+      healthScore: w.healthScore != null ? w.healthScore : 100,
+      healthSignalsCount: w.healthSignalsCount || 2,
+      stuck,
+      // Durasi sewa
+      paywallRemSec: w.paywallRemSec != null ? w.paywallRemSec : -1,
+      paywallFmt: fmtSec(w.paywallRemSec),
+      rentRemSec: w.rentRemSec != null ? w.rentRemSec : -1,
+      rentFmt: fmtSec(w.rentRemSec),
+      rentEquipped: Boolean(w.rentEquipped),
+      autoPaywall: Boolean(w.autoPaywall),
+      autoRent: Boolean(w.autoRent),
+      ratePerMin: finalRatePerMin,
+      ratePer30m: live ? (mathData.per30m || Math.round(finalRatePerMin * 30)) : 0,
+      ratePerHour: finalRatePerHour,
+      wlPerMin: live ? (mathData.wlPerMin || (finalRatePerMin / (Number(settings.gemsPerWl) || 2200))) : 0,
+      wlPerHour: finalWlPerHour,
+      dlPerHour: finalDlPerHour,
+      projection24h: finalProjection24h,
+      lastSeenAgo: Math.round(diffMs / 1000) + 's lalu',
+      lastSeenTs: w.lastSeen || 0,
+    });
+  }
+
+  let fleetPerMin = 0, fleetPer30m = 0, fleetPerHour = 0, fleetWlPerHour = 0, fleetDlPerHour = 0;
+  for (const b of bots) {
+    if (b.state === 'OFFLINE') continue;
+    fleetPerMin += b.ratePerMin;
+    fleetPer30m += b.ratePer30m;
+    fleetPerHour += b.ratePerHour;
+    fleetWlPerHour += (b.wlPerHour || 0);
+    fleetDlPerHour += (b.dlPerHour || 0);
+  }
+
+  const gemsPerWl = Number(settings.gemsPerWl) || 2200;
+  const dlPerWl = Number(settings.dlPerWl) || 100;
+  const bglPerWl = Number(settings.bglPerWl) || 10000;
+  const gemsEquivalentWl = totalGems / gemsPerWl;
+  const inventoryWl = totalWlInv + (totalDl * dlPerWl) + (totalBgl * bglPerWl);
+  const totalWealthWl = Math.round(gemsEquivalentWl + inventoryWl);
+
+  return {
+    bots,
+    summary: {
+      totalBots: bots.length,
+      online,
+      stale,
+      offline,
+      totalGems,
+      totalDl,
+      totalBgl,
+      totalWlInv,
+      // INVENTORI (fisik, hasil convert lock ke WL) vs EKUIVALEN (gems → WL)
+      gemsEquivalentWl: Math.round(gemsEquivalentWl),
+      inventoryWl: Math.round(inventoryWl),
+      totalWealthWl,
+      totalGemsPerMin: fleetPerMin,
+      totalGemsPer30m: fleetPer30m,
+      totalGemsPerHour: fleetPerHour,
+      totalWlPerHour: Math.round(fleetWlPerHour * 10) / 10,
+      totalDlPerHour: Math.round(fleetDlPerHour * 100) / 100,
+      projection24h: fleetPerHour * 24,
+      projection24hWl: Math.round(fleetWlPerHour * 24),
+      avgPingMs: pingCount > 0 ? Math.round(totalPing / pingCount) : null,
+      pingSampleCount: pingCount,
+      avgHealth: bots.length ? Math.round(bots.reduce((a, b) => a + b.healthScore, 0) / bots.length) : null,
+      duplicateCount: bots.filter(b => b.duplicate).length,
+      legacyCount: bots.filter(b => b.isLegacy).length,
+      recentEvents: events.length,
+    },
+    serverTime: now,
+    settings: {
+      onlineTtlMs: ttlOnline(),
+      staleTtlMs: ttlStale(),
+      gemsPerWl,
+      dlPerWl,
+      bglPerWl,
+    },
+  };
+}
+
+// =============================================================
+//  ROUTES
+// =============================================================
+const registerRoutes = (prefix = '') => {
+  // Ingest — refresh dulu supaya upsert per userId melihat state instance lain
+  app.post(`${prefix}/heartbeat`, async (req, res) => {
+    await refreshState(true);
+    res.json(await processHeartbeat(req.body));
+  });
+  app.post(`${prefix}/update`, async (req, res) => {
+    await refreshState(true);
+    res.json({ status: 'ok', ...(await processHeartbeat(req.body)) });
+  });
+
+  // Dashboard & Fleet
+  app.get(`${prefix}/fleet`, async (_, res) => {
+    await refreshState(true);
+    if (detectStateTransitions() > 0) await flush();
+    res.json(computeFleet());
+  });
+
+  // Debug Instance
+  app.get(`${prefix}/debug/instance`, (_, res) => {
+    res.json({
+      instanceId: SERVER_INSTANCE_ID,
+      bootTime: SERVER_BOOT_TIME,
+      uptimeSec: Math.floor((Date.now() - SERVER_BOOT_TIME) / 1000),
+      environment: process.env.VERCEL ? 'vercel-serverless' : 'long-running',
+      pid: process.pid,
+      persistence: BLOB_READY ? 'vercel-blob' : 'tmp-ephemeral',
+    });
+  });
+
+  // Debug Rejects
+  app.get(`${prefix}/debug/rejects`, async (_, res) => {
+    await refreshState();
+    res.json({ count: rejectedHeartbeats.length, rejects: rejectedHeartbeats });
+  });
+
+  // Debug Workers (tabel rapi: userId, instanceId, seq, lastSeen, rejects, flags)
+  app.get(`${prefix}/debug/workers`, async (_, res) => {
+    await refreshState();
+    const now = Date.now();
+    const bots = [];
+    for (const [userId, w] of workers.entries()) {
+      const diffMs = now - (w.lastSeen || 0);
+      bots.push({
+        userId,
+        name: w.name,
+        instanceId: w.instanceId,
+        seq: w.seq || 0,
+        lastSeenTs: w.lastSeen || 0,
+        lastSeenAgo: Math.round(diffMs / 1000) + 's lalu',
+        state: stateFor(diffMs),
+        isLegacy: !!w.isLegacy,
+        duplicate: !!w.duplicate,
+        restartCount: w.restartCount || 0,
+        rejected: rejectedCounts.get(userId) || 0,
+      });
+    }
+    bots.sort((a, b) => b.lastSeenTs - a.lastSeenTs);
+    res.json({ count: bots.length, bots });
+  });
+
+  // History time-series (fleet atau per-bot)
+  app.get(`${prefix}/history`, async (req, res) => {
+    await refreshState();
+    const points = Math.min(720, Number(req.query.points || 240));
+    const userId = req.query.userId ? String(req.query.userId) : null;
+
+    if (userId) {
+      const w = workers.get(userId);
+      if (!w) return res.json({ samples: [] });
+      const samples = (w.history || []).slice(-points).map(h => ({ ts: h.ts, gems: h.gems }));
+      return res.json({ samples });
+    }
+
+    // Fleet-wide: jumlah gems seluruh bot per bucket 30 detik
+    const bucket = new Map();
+    for (const w of workers.values()) {
+      for (const h of (w.history || [])) {
+        const key = Math.floor(h.ts / 30000) * 30000;
+        bucket.set(key, (bucket.get(key) || 0) + (h.gems || 0));
+      }
+    }
+    const samples = [...bucket.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .slice(-points)
+      .map(([ts, gems]) => ({ ts, gems }));
+    return res.json({ samples });
+  });
+
+  // Detail satu bot (chart + event khusus bot)
+  app.get(`${prefix}/workers/:userId`, async (req, res) => {
+    await refreshState();
+    const fleet = computeFleet();
+    const bot = fleet.bots.find(b => b.userId === req.params.userId);
+    if (!bot) return res.status(404).json({ error: 'NOT_FOUND' });
+    const w = workers.get(req.params.userId);
+    return res.json({
+      bot,
+      history: (w?.history || []).map(h => ({ ts: h.ts, gems: h.gems })),
+      events: events.filter(e => e.userId === req.params.userId).slice(0, 30),
+    });
+  });
+
+  // Hapus worker + seluruh history/event-nya (tidak bisa dibatalkan)
+  app.delete(`${prefix}/workers/:userId`, async (req, res) => {
+    await refreshState(true);
+    const uid = String(req.params.userId);
+    const existed = workers.delete(uid);
+    tombstones.set(uid, Date.now());
+    rejectedCounts.delete(uid);
+    const before = events.length;
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (String(events[i].userId) === uid) events.splice(i, 1);
+    }
+    await flush();
+    res.json({ ok: true, deleted: existed, eventsRemoved: before - events.length });
+  });
+
+  // Hapus semua worker yang OFFLINE lebih lama dari N menit (default 60)
+  app.delete(`${prefix}/workers`, async (req, res) => {
+    await refreshState(true);
+    const olderThanMin = Number(req.query.olderThanMinutes || 60);
+    const cut = Date.now() - olderThanMin * 60000;
+    const removed = [];
+    for (const [uid, w] of [...workers.entries()]) {
+      if ((w.lastSeen || 0) < cut) { workers.delete(uid); tombstones.set(uid, Date.now()); removed.push(uid); }
+    }
+    if (removed.length) {
+      const gone = new Set(removed);
+      for (let i = events.length - 1; i >= 0; i--) {
+        if (gone.has(String(events[i].userId))) events.splice(i, 1);
+      }
+      await flush();
+    }
+    res.json({ ok: true, deleted: removed.length, userIds: removed });
+  });
+
+  // Legacy-compatible status
+  app.get(`${prefix}/status`, async (_, res) => {
+    await refreshState();
+    const fleet = computeFleet();
+    const out = {};
+    for (const b of fleet.bots) {
+      out[b.userId] = {
+        bot_id: b.userId,
+        name: b.name,
+        status: b.state,
+        world: b.world,
+        gems: b.gems,
+        dl: b.dl,
+        bgl: b.bgl,
+        uptime: b.uptime,
+        gems_per_min: b.ratePerMin,
+        gems_per_hour: b.ratePerHour,
+        equivalent_wl: Number(b.wlEquivalentFromGems.toFixed(1)),
+        last_seen: Date.now() - (parseInt(b.lastSeenAgo, 10) * 1000),
+      };
+    }
+    res.json(out);
+  });
+
+  // Test webhook Discord
+  app.post(`${prefix}/test-webhook`, async (req, res) => {
+    const url = String(req.body?.url || settings.discordWebhookUrl || '');
+    if (!url) return res.status(400).json({ ok: false, error: 'Webhook URL kosong' });
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          embeds: [{
+            title: 'GT Fleet Monitor — Test Webhook',
+            description: 'Webhook test berhasil. Koneksi ke Discord aktif.',
+            color: 0x3b82f6,
+            timestamp: new Date().toISOString(),
+            footer: { text: 'GT Fleet Monitor' },
+          }],
+        }),
+      });
+      const ok = r.ok;
+      return res.json({ ok, status: r.status });
+    } catch (err) {
+      return res.status(502).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Test WhatsApp via Fonnte
+  app.post(`${prefix}/test-whatsapp`, async (req, res) => {
+    try {
+      const msg = req.body?.message || '🤖 *GT Fleet Monitor Test*\nKoneksi WhatsApp via Fonnte aktif dan siap mengirim status & alert!';
+      const ok = await sendFonnte(msg);
+      res.json({ ok, message: ok ? 'WhatsApp test berhasil terkirim' : 'Gagal mengirim via Fonnte' });
+    } catch (err) {
+      res.status(502).json({ ok: false, error: err.message });
+    }
+  });
+
+  // =============================================================
+  //  SMART MAGPLANT ENDPOINTS (Knowledge Sharing + Bandit AI)
+  // =============================================================
+  app.post(`${prefix}/magplant/report`, async (req, res) => {
+    try {
+      const data = req.body || {};
+      const updated = await reportMagplant(data);
+      if (!updated) return res.status(400).json({ ok: false, error: 'INVALID_DATA' });
+      res.json({ ok: true, magplant: updated });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.post(`${prefix}/magplant/recommend`, async (req, res) => {
+    try {
+      const result = await recommendBestMagplant(req.body || {});
+      if (!result) return res.json({ ok: true, recommendation: null, message: 'Belum ada magplant terdaftar' });
+      res.json({ ok: true, ...result });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.post(`${prefix}/magplant/release`, async (req, res) => {
+    try {
+      const { botName, key } = req.body || {};
+      if (!botName) return res.status(400).json({ ok: false, error: 'botName required' });
+      const r = await releaseMagplantReservation(botName, key);
+      res.json(r);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.post(`${prefix}/magplant/clear`, async (_, res) => {
+    try {
+      const r = await clearAllMagplants();
+      res.json(r);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.get(`${prefix}/magplant/fleet`, async (_, res) => {
+    try {
+      const map = await loadAllMagplants();
+      const list = Array.from(map.values());
+      list.sort((a, b) => ((b.count ?? -1) - (a.count ?? -1)));
+      res.json({ ok: true, count: list.length, magplants: list });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // Manual trigger / cron hourly report (dipanggil Vercel Cron tiap jam atau manual)
+  app.all(`${prefix}/cron/hourly-report`, async (req, res) => {
+    await refreshState(true);
+    const now = Date.now();
+    // Cooldown 50 menit — tolak jika laporan terakhir baru saja dikirim
+    const elapsed = now - lastHourlyReportTs;
+    if (elapsed < 50 * 60 * 1000 && req.method === 'GET') {
+      const nextInMin = Math.ceil((50 * 60 * 1000 - elapsed) / 60000);
+      return res.json({ ok: false, skipped: true, reason: `cooldown aktif, laporan berikutnya ~${nextInMin} menit lagi` });
+    }
+    const fleet = computeFleet();
+    const ok = await triggerHourlyReport(now, fleet);
+    if (ok) {
+      lastHourlyReportTs = now;
+      await persistState();
+    }
+    res.json({ ok, botCount: fleet.bots.length, fleetBots: fleet.bots.map(b => b.name), triggeredAt: new Date().toISOString() });
+  });
+
+  // Health
+  app.get(`${prefix}/health`, (_, res) => {
+    const fleet = computeFleet();
+    res.json({
+      ok: true,
+      uptimeSec: Math.floor((Date.now() - SERVER_BOOT_TIME) / 1000),
+      workers: workers.size,
+      online: fleet.summary.online,
+      stale: fleet.summary.stale,
+      offline: fleet.summary.offline,
+      serverTime: Date.now(),
+    });
+  });
+
+  // Settings
+  app.get(`${prefix}/settings`, async (_, res) => {
+    await loadSettings();
+    res.json({ settings });
+  });
+  app.put(`${prefix}/settings`, async (req, res) => {
+    const allowed = Object.keys(DEFAULT_SETTINGS);
+    for (const key of allowed) {
+      if (req.body[key] === undefined) continue;
+      const def = DEFAULT_SETTINGS[key];
+      if (typeof def === 'number') {
+        const n = Number(req.body[key]);
+        if (Number.isFinite(n)) settings[key] = n;
+      } else if (typeof def === 'boolean') {
+        settings[key] = !!req.body[key];
+      } else {
+        settings[key] = String(req.body[key] || '');
+      }
+    }
+    await saveSettings();
+    res.json({ ok: true, settings });
+  });
+
+  // Events
+  app.get(`${prefix}/events`, async (req, res) => {
+    await refreshState();
+    res.json({ events: events.slice(0, 100), total: events.length });
+  });
+};
+
+registerRoutes('/api');
+registerRoutes('');
+
+module.exports = app;
