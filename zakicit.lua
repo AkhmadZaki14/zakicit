@@ -1158,6 +1158,7 @@ local function Step()
         Join(worldName)
         Sleep(D("Join"))
         m = false
+        PaywallExpires = 0 -- Reset expiry saat rejoin, wajib verifikasi ulang
         return
     end
 
@@ -1183,6 +1184,22 @@ local function Step()
             Sleep(D("PreMove"))
             SlowFindPath(S.PosX, S.PosY, D("PathStep"))
             Sleep(D("PostMove"))
+
+            -- SENSOR 1: Verifikasi apakah bot BENAR-BENAR sampai di farm pos
+            local me = GetLocal()
+            local curX = me and me.pos and math.floor(me.pos.x / 32) or -999
+            local curY = me and me.pos and math.floor(me.pos.y / 32) or -999
+            if curX ~= S.PosX or curY ~= S.PosY then
+                Log(string.format("`4[PosGuard]`w Gagal masuk Farm Pos! Sekarang di (%d, %d), target (%d, %d)", curX, curY, S.PosX, S.PosY))
+                Cheat(false)
+                m = false
+                -- Jika ada paywall, kemungkinan tertahan pintu paywall tertutup!
+                if S.PNB.AutoPaywall and S.PaywallX ~= 0 then
+                    Log("`3[PosGuard]`w Mencoba periksa & bayar paywall...")
+                    CheckPaywall(true)
+                end
+                return
+            end
 
             -- Hadap karakter sesuai setting (BFG kanan vs kiri)
             local targetPlaceX = S.PNB.FaceRight and (S.PosX + 1) or (S.PosX - 1)
@@ -1215,7 +1232,24 @@ local function Step()
         m = false
     end
 
-    if m then Run.status = "Farming" end
+    -- SENSOR 2: Watchdog posisi saat aktif farming
+    -- Jika bot terlempar / respawn / jatuh / akses dicabut paksa di tengah farming:
+    if m then
+        local me = GetLocal()
+        local curX = me and me.pos and math.floor(me.pos.x / 32) or -999
+        local curY = me and me.pos and math.floor(me.pos.y / 32) or -999
+        if curX ~= S.PosX or curY ~= S.PosY then
+            Log(string.format("`4[PosGuard]`w Bot terlempar dari Farm Pos! Sekarang di (%d, %d). Matikan cheat...", curX, curY))
+            Cheat(false)
+            m = false
+            if S.PNB.AutoPaywall and S.PaywallX ~= 0 then
+                Log("`3[PosGuard]`w Cek akses paywall setelah terlempar...")
+                CheckPaywall(true)
+            end
+            return
+        end
+        Run.status = "Farming"
+    end
 
     BuyCheat()
     if S.PNB.AutoSuckBgems then SuckBgems() end
