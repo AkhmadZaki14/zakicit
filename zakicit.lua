@@ -107,6 +107,8 @@ local RentWarActive   = false -- flag sedang dalam mode spam war sewa
 local CaptureRent     = false -- flag: punch berikutnya set RentX/Y
 local LastRentCheck   = 0     -- kapan terakhir cek sisa sewa (self-wrench)
 local RentClothBtn    = ""    -- tombol cloth, misal "cloth_-258"
+local RentItemId      = ""    -- ID icon item sewaan, misal 16690
+local RentLastToggle  = 0     -- timestamp kapan terakhir kali klik tombol cloth (anti ajep-ajep)
 local RentWtb         = ""    -- token wtb dari dialog rent_buyconfirm
 local RentSuccess     = false -- konfirmasi sewa sukses dari console
 local RentStep        = "IDLE"-- state machine: IDLE | WAIT_BUY | WAIT_CONFIRM | WAIT_RESULT | DONE
@@ -175,9 +177,14 @@ end
 
 local function FTime(sec)
     sec = math.max(0, math.floor(sec))
-    local h = math.floor(sec / 3600)
-    local mi = math.floor((sec % 3600) / 60)
-    local s = sec % 60
+    local d = math.floor(sec / 86400)
+    local rem = sec % 86400
+    local h = math.floor(rem / 3600)
+    local mi = math.floor((rem % 3600) / 60)
+    local s = rem % 60
+    if d > 0 then
+        return string.format("%dd %02d:%02d:%02d", d, h, mi, s)
+    end
     return string.format("%02d:%02d:%02d", h, mi, s)
 end
 
@@ -843,7 +850,8 @@ end
 local function CheckRentStatus(force)
     if not S.PNB.AutoRent then return end
     local now = os.time()
-    if not force and now - LastRentCheck < 60 then return end
+    -- Anti-spam: minimal jeda 30 detik untuk self-wrench
+    if not force and now - LastRentCheck < 30 then return end
     LastRentCheck = now
     RentChecking = true
 
@@ -852,9 +860,9 @@ local function CheckRentStatus(force)
     Log("`9[Rent]`w Memeriksa status durasi sewa pakaian (Self-Wrench)...")
     if netId and netId > 0 then
         SendPacket(2, "action|wrench\n|netid|" .. tostring(netId))
+    else
+        Wrench(0, 0)
     end
-    -- Fallback wrench posisi berdiri sendiri
-    Wrench(0, 0)
     Sleep(800)
 end
 
@@ -1313,12 +1321,12 @@ local function Step()
     end
 
     -- SISTEM RENTING:
-    -- 1. Cek durasi sewa secara periodik / saat awal start
-    if S.PNB.AutoRent and RentExpires == 0 and not RentChecking then
+    -- 1. Cek durasi sewa secara periodik saat awal start (maksimal sekali per 60 detik)
+    if S.PNB.AutoRent and RentExpires == 0 and not RentChecking and (os.time() - LastRentCheck >= 60) then
         CheckRentStatus(false)
     end
     -- 2. WAR RENTING: Jika durasi sewa sisa < 60 detik atau belum punya item sewa:
-    if S.PNB.AutoRent and S.RentX ~= 0 and (RentExpires > 0 and os.time() >= RentExpires - 60 or (RentExpires == 0 and not RentChecking)) then
+    if S.PNB.AutoRent and S.RentX ~= 0 and (RentExpires > 0 and os.time() >= RentExpires - 60 or (RentExpires == 0 and not RentChecking and os.time() - LastRentCheck >= 60)) then
         DoWarRent()
     end
 
@@ -1521,50 +1529,62 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             Log("[DBG] dialog: " .. a:sub(1, 80):gsub("\n", " "))
         end
 
-        -- RENTING 1: Intercept Self-Wrench Popup -> Cek apakah item sudah terpasang, lalu buka clothlease
+        -- RENTING 1: Intercept Self-Wrench Popup -> Cek apakah item sewaan aktif di Active Effects
         if a:find("clothlease", 1, true) and (a:find("dialog_name|popup", 1, true) or a:find("Active effects:", 1, true) or a:find("Cloth Renting", 1, true)) then
-            -- Cek apakah item sewaan sudah aktif di badan
-            if a:find("Legendary Shard Sword", 1, true) or a:find("16690", 1, true) then
+            -- Sensor dinamis: cek apakah item sewaan ada di Active Effects
+            -- Cek ID icon atau nama item
+            local activeEff = a:match("Active effects:(.-)You have") or a:match("Active effects:(.*)") or ""
+            if RentItemId ~= "" and activeEff:find(RentItemId, 1, true) then
+                RentEquipped = true
+            elseif activeEff:find("Legendary Shard Sword", 1, true) or activeEff:find("16690", 1, true) or activeEff:find("16858", 1, true) then
                 RentEquipped = true
             else
                 RentEquipped = false
             end
-            Log("`9[Rent]`w Membuka menu Cloth Renting...")
+            Log(string.format("`9[Rent]`w Menu Profile dibuka. Status di badan: %s. Membuka Cloth Renting...", RentEquipped and "TERPASANG" or "BELUM"))
             SendPacket(2, "action|dialog_return\ndialog_name|popup\nbuttonClicked|clothlease\n")
             return true
         end
 
-        -- RENTING 2: Intercept Menu clothlease -> Parse sisa durasi sewa + pasang jika belum terpasang
+        -- RENTING 2: Intercept Menu clothlease -> Parse durasi (D, H, M, S) + equip guard
         if a:find("clothlease", 1, true) or a:find("Rented Clothing", 1, true) then
             local clean = StripColor(a)
-            -- Cari tombol cloth_ (misal cloth_-258)
+            -- Cari tombol cloth_ (misal cloth_-258) dan icon item ID (misal 16690)
             local btn = clean:match("(cloth_%-?%d+)")
-            local hrs = clean:match("(%d+)h")
-            local mins = clean:match("(%d+)m")
-            local secs = clean:match("(%d+)s")
+            local rawId = clean:match("cloth_%-?%d+|.-|staticframe|(%d+)")
+            if rawId then RentItemId = rawId end
 
-            if btn and (hrs or mins or secs) then
+            -- Parse durasi lengkap: hari (d), jam (h), menit (m), detik (s)
+            local days = tonumber(clean:match("(%d+)d")) or 0
+            local hrs  = tonumber(clean:match("(%d+)h")) or 0
+            local mins = tonumber(clean:match("(%d+)m")) or 0
+            local secs = tonumber(clean:match("(%d+)s")) or 0
+            local totalSec = days * 86400 + hrs * 3600 + mins * 60 + secs
+
+            if btn and totalSec > 0 then
                 RentClothBtn = btn
-                local totalSec = (tonumber(hrs) or 0) * 3600 + (tonumber(mins) or 0) * 60 + (tonumber(secs) or 0)
                 RentExpires = os.time() + totalSec
                 Log(string.format("`2[Rent]`w Sisa durasi sewa: %s (Status terpasang: %s)", FTime(totalSec), RentEquipped and "YA" or "BELUM"))
 
-                -- PENTING: HANYA PASANG JIKA BELUM TERPASANG!
+                -- SENSOR ANTI AJEP-AJEP:
+                -- 1. Jangan sentuh jika sudah terpasang!
+                -- 2. Jangan sentuh jika baru saja di-toggle dalam 20 detik terakhir!
+                local now = os.time()
                 if not RentEquipped then
-                    Log("`9[Rent]`w Item belum dipakai! Memasang item: " .. btn)
-                    SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btn .. "\n")
-                    RentEquipped = true
+                    if now - RentLastToggle > 20 then
+                        RentLastToggle = now
+                        Log("`9[Rent]`w Item belum dipakai! Memasang item: " .. btn)
+                        SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btn .. "\n")
+                        RentEquipped = true
+                    else
+                        Log("`3[Rent]`w Cooldown toggle aktif (anti ajep-ajep). Tunggu stabil.")
+                    end
                 else
-                    Log("`2[Rent]`w Item sudah terpasang aman di badan. Lewati toggle.")
+                    Log("`2[Rent]`w Item SUDAH TERPASANG aman di badan. Dilarang klik toggle!")
                 end
             elseif btn then
-                -- Ada tombol cloth tapi format waktu beda
                 RentClothBtn = btn
-                Log("`2[Rent]`w Item terdeteksi: " .. btn .. ". Pasang jika belum terpasang.")
-                if not RentEquipped then
-                    SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btn .. "\n")
-                    RentEquipped = true
-                end
+                Log("`2[Rent]`w Item terdeteksi: " .. btn .. " (durasi tak terbaca).")
             else
                 -- Tidak ada item sewaan terdaftar di menu!
                 RentExpires = 0
@@ -1693,6 +1713,16 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             RentSuccess = true
             RentWarActive = false
             Log("`2[Rent]`w Konfirmasi: " .. StripColor(a))
+        end
+        -- SENSOR AKURAT dari event server: mod added/removed
+        if a:find("mod added", 1, true) then
+            RentEquipped = true
+            RentLastToggle = os.time()
+            Log("`2[Rent]`w Mod AKTIF (mod added). Status: TERPASANG.")
+        end
+        if a:find("mod removed", 1, true) then
+            RentEquipped = false
+            Log("`4[Rent]`w Mod NONAKTIF (mod removed). Status: DILEPAS.")
         end
         for _, p in ipairs(BlockConsole) do
             if a:find(p, 1, true) then return true end
