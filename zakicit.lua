@@ -109,7 +109,8 @@ local LastRentCheck   = 0     -- kapan terakhir cek sisa sewa (self-wrench)
 local RentClothBtn    = ""    -- tombol cloth, misal "cloth_-258"
 local RentWtb         = ""    -- token wtb dari dialog rent_buyconfirm
 local RentSuccess     = false -- konfirmasi sewa sukses dari console
-local RentStep        = "IDLE"-- state machine: IDLE | WAIT_BUY | WAIT_CONFIRM | DONE
+local RentStep        = "IDLE"-- state machine: IDLE | WAIT_BUY | WAIT_CONFIRM | WAIT_RESULT | DONE
+local RentStepTime    = 0     -- waktu saat berpindah ke state terbaru
 
 -- ------------------------------------------------------------
 --  UTIL
@@ -896,25 +897,30 @@ local function DoWarRent()
     local maxWarSec = 45
     local startWar = os.time()
     local lastWrench = 0
-    local stepTime = os.time()
 
     while RentWarActive and (os.time() - startWar < maxWarSec) do
-        if RentSuccess or RentStep == "DONE" then break end
+        if RentSuccess then break end
 
         local now = os.time()
 
         if RentStep == "WAIT_BUY" then
-            -- Kirim wrench setiap 500ms sampai dialog pertama terbuka
+            -- Kirim wrench setiap 1 detik sampai dialog pertama terbuka
             if now - lastWrench >= 1 or lastWrench == 0 then
                 lastWrench = now
                 WrenchTile(S.RentX, S.RentY)
             end
         elseif RentStep == "WAIT_CONFIRM" then
             -- Dialog pertama sudah dibalas! JANGAN WRENCH LAGI!
-            -- Beri waktu server mengirim dialog rent_buyconfirm (maksimal 2.5 detik)
-            if now - stepTime > 3 then
-                -- Timeout menunggu konfirmasi -> reset ke WAIT_BUY untuk coba lagi
+            -- Beri waktu server mengirim dialog rent_buyconfirm (maksimal 3 detik)
+            if now - RentStepTime > 3 then
                 Log("`3[Rent]`w Menunggu konfirmasi timeout, mencoba wrench ulang...")
+                RentStep = "WAIT_BUY"
+                lastWrench = 0
+            end
+        elseif RentStep == "WAIT_RESULT" then
+            -- Packet beli sudah terkirim! Tunggu server mendebet WL & kirim notifikasi sukses
+            if now - RentStepTime > 5 then
+                Log("`3[Rent]`w Menunggu respon pembelian timeout, mengulang sewa...")
                 RentStep = "WAIT_BUY"
                 lastWrench = 0
             end
@@ -1576,9 +1582,10 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             local ry = a:match("embed_data|y|(%d+)") or S.RentY
             if wtb then
                 RentWtb = wtb
-                Log(string.format("`2[Rent]`w Konfirmasi WTB terdeteksi (%s)! Mengunci pembelian...", wtb))
+                Log(string.format("`2[Rent]`w Konfirmasi WTB terdeteksi (%s)! Mengirim packet pembelian...", wtb))
                 SendPacket(2, string.format("action|dialog_return\ndialog_name|rent_buyconfirm\nwtb|%s|\nx|%d|\ny|%d|\n", wtb, tonumber(rx), tonumber(ry)))
-                RentStep = "DONE"
+                RentStep = "WAIT_RESULT"
+                RentStepTime = os.time()
             end
             return true
         end
@@ -1591,6 +1598,7 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             SendPacket(2, string.format("action|dialog_return\ndialog_name|rent_buy\nx|%d|\ny|%d|\n", tonumber(rx), tonumber(ry)))
             -- Pindah ke state menunggu konfirmasi, BERHENTI WRENCH sampai dialog_2 datang
             RentStep = "WAIT_CONFIRM"
+            RentStepTime = os.time()
             return true
         end
 
