@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZAKICIT PNB v2 — RmlUi UI Preview</title>
+<style>
+/* ════════════════════════════════════════
+   NORMALIZE (diambil dari zakicit.rcss)
+   ════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    background: #060611;
+    color: #e6e6fa;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 13px;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 20px;
+}
+
+/* ── MAIN WINDOW ── */
+.window {
+    width: 520px;
+    background: #0d0d1f;
+    border: 2px solid #332b5e;
+    border-radius: 8px;
+    box-shadow: 0 0 28px rgba(0,240,255,0.25), 0 0 60px rgba(0,0,0,0.8);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: 680px;
+}
+
+/* ── TITLE BAR ── */
+.title-bar {
+    background: #161233;
+    border-bottom: 2px solid #ff007f;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+}
+.title-text {
+    font-size: 15px;
+    font-weight: bold;
+    color: #00f0ff;
+    letter-spacing: 1px;
+    text-shadow: 0 0 10px #00f0ff;
+}
+.title-right { display: flex; align-items: center; gap: 8px; }
+.status-badge {
+    padding: 2px 9px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+.status-online {
+    background: rgba(0,255,128,.15);
+    color: #00ff80;
+    border: 1px solid #00ff80;
+    text-shadow: 0 0 4px #00ff80;
+}
+.status-offline {
+    background: rgba(255,0,85,.15);
+    color: #ff0055;
+    border: 1px solid #ff0055;
+}
+.btn-close {
+    background: #ff0055;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    width: 24px; height: 24px;
+    font-weight: bold;
+    cursor: pointer;
+    font-size: 13px;
+    display: flex; align-items: center; justify-content: center;
+}
+.btn-close:hover { background: #ff3377; box-shadow: 0 0 8px #ff0055; }
+
+/* ── TAB BAR ── */
+.tab-bar {
+    display: flex;
+    background: #100e26;
+    border-bottom: 1px solid #29224d;
+    padding: 4px 6px 0;
+    gap: 3px;
+    flex-shrink: 0;
+}
+.tab-btn {
+    flex: 1;
+    padding: 8px 3px;
+    background: #191438;
+    color: #8c82b8;
+    border: 1px solid #29224d;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    font-size: 11px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 100ms;
+}
+.tab-btn:hover { color: #00f0ff; background: #231c50; }
+.tab-btn.active {
+    background: #0d0d1f;
+    color: #00f0ff;
+    border-top: 2px solid #00f0ff;
+    border-left: 1px solid #3d3275;
+    border-right: 1px solid #3d3275;
+    text-shadow: 0 0 6px #00f0ff;
+}
+
+/* ── TAB CONTENT ── */
+.tab-content {
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    overflow-y: auto;
+    flex: 1;
+}
+.tab-content.active { display: flex; }
+
+/* ── CARDS ── */
+.card {
+    background: #13122c;
+    border: 1px solid #2a2550;
+    border-radius: 6px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+.card-title {
+    font-size: 11px;
+    font-weight: bold;
+    color: #00f0ff;
+    border-bottom: 1px solid #252047;
+    padding-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* ── STATS ── */
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+}
+.stat-label { color: #8880aa; }
+.stat-val { font-weight: bold; }
+.neon-cyan  { color: #00f0ff; text-shadow: 0 0 4px #00f0ff88; }
+.neon-green { color: #00ff80; text-shadow: 0 0 4px #00ff8088; }
+.neon-pink  { color: #ff79c6; text-shadow: 0 0 4px #ff79c688; }
+.neon-yel   { color: #ffea00; text-shadow: 0 0 4px #ffea0088; }
+.neon-red   { color: #ff5555; text-shadow: 0 0 4px #ff555588; }
+
+/* ── BUTTONS ── */
+.btn {
+    padding: 8px 12px;
+    border-radius: 5px;
+    font-weight: bold;
+    font-size: 12px;
+    text-align: center;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all 100ms;
+}
+.btn-start {
+    background: #00692e;
+    color: #fff;
+    border-color: #00ff80;
+    padding: 11px;
+    font-size: 14px;
+    box-shadow: 0 0 12px rgba(0,255,128,.4);
+}
+.btn-start:hover { background: #009f47; box-shadow: 0 0 20px rgba(0,255,128,.7); }
+.btn-stop {
+    background: #730025;
+    color: #fff;
+    border-color: #ff0055;
+    padding: 11px;
+    font-size: 14px;
+    box-shadow: 0 0 12px rgba(255,0,85,.4);
+}
+.btn-stop:hover { background: #a0003a; box-shadow: 0 0 20px rgba(255,0,85,.7); }
+.btn-cyan { background: #00485a; color: #00f0ff; border-color: #00f0ff; }
+.btn-cyan:hover { background: #006f8c; box-shadow: 0 0 8px #00f0ff; }
+.btn-pink { background: #5a0038; color: #ff79c6; border-color: #ff007f; }
+.btn-pink:hover { background: #8c005a; box-shadow: 0 0 8px #ff007f; }
+.btn-yel  { background: #504a00; color: #ffee55; border-color: #ffea00; }
+.btn-yel:hover { background: #777000; box-shadow: 0 0 8px #ffea00; }
+.btn-group { display: flex; gap: 6px; }
+.btn-group .btn { flex: 1; }
+
+/* ── FORM INPUTS ── */
+.input-row { display: flex; align-items: center; gap: 8px; }
+.input-text {
+    flex: 1;
+    background: #090817;
+    border: 1px solid #39306b;
+    border-radius: 4px;
+    color: #00f0ff;
+    padding: 6px 8px;
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+}
+.input-text:focus {
+    border-color: #00f0ff;
+    box-shadow: 0 0 6px rgba(0,240,255,.4);
+}
+
+/* ── CHECKBOXES ── */
+.checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #c0b9dd;
+    cursor: pointer;
+    padding: 2px 0;
+}
+.checkbox-row input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: #00f0ff;
+    cursor: pointer;
+}
+
+/* ── MAG LIST ── */
+.mag-list {
+    background: #090817;
+    border: 1px solid #221c44;
+    border-radius: 4px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.mag-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    font-family: monospace;
+    padding: 3px 6px;
+    border-radius: 3px;
+    background: #110e28;
+}
+.mag-ready { color: #00ff80; }
+.mag-empty { color: #ff5555; }
+.mag-shared { color: #ffea00; }
+
+/* ── LOG BOX ── */
+.log-box {
+    background: #070612;
+    border: 1px solid #221d42;
+    border-radius: 4px;
+    padding: 8px;
+    height: 130px;
+    overflow-y: auto;
+    font-family: monospace;
+    font-size: 11px;
+    color: #8d85b5;
+    line-height: 1.5;
+}
+.log-box::-webkit-scrollbar { width: 5px; }
+.log-box::-webkit-scrollbar-thumb { background: #332b5e; border-radius: 4px; }
+
+/* ── HINT TEXT ── */
+.note { font-size: 10px; color: #6b6485; }
+</style>
+</head>
+<body>
+
+<div class="window">
+    <!-- TITLE BAR -->
+    <div class="title-bar">
+        <span class="title-text">⚡ ZAKICIT PNB v2</span>
+        <div class="title-right">
+            <span class="status-badge status-online">FARMING</span>
+            <button class="btn-close">✕</button>
+        </div>
+    </div>
+
+    <!-- TAB BAR -->
+    <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('farm',this)">Farm</button>
+        <button class="tab-btn" onclick="switchTab('mag',this)">Magplant</button>
+        <button class="tab-btn" onclick="switchTab('paywall',this)">Paywall</button>
+        <button class="tab-btn" onclick="switchTab('rent',this)">Renting</button>
+        <button class="tab-btn" onclick="switchTab('setting',this)">Setting</button>
+        <button class="tab-btn" onclick="switchTab('config',this)">Config</button>
+    </div>
+
+    <!-- ════ TAB 1: FARM ════ -->
+    <div class="tab-content active" id="tab-farm">
+        <div class="btn-group">
+            <button class="btn btn-start">START PNB</button>
+            <button class="btn btn-stop">STOP PNB</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Live Statistics</div>
+            <div class="stat-row">
+                <span class="stat-label">Total Gems</span>
+                <span class="stat-val neon-cyan">1,842,500</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Laju Panen (Gems/Jam)</span>
+                <span class="stat-val neon-pink">1.25M / jam</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Inventori (DL / BGL)</span>
+                <span class="stat-val neon-yel">1 DL / 11 BGL</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Remote &amp; Mag Aktif</span>
+                <span class="stat-val" style="color:#cc99ff">1x | Mag (15, 23)</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Uptime Sesi</span>
+                <span class="stat-val neon-green">02:45:18</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">World &amp; Koordinat Farm</div>
+            <div class="input-row">
+                <input type="text" class="input-text" value="NIGGUY" />
+                <button class="btn btn-cyan">Pakai World Ini</button>
+            </div>
+            <div style="margin-top: 4px;">
+                <button class="btn btn-cyan" style="width:100%;">[OK] Farm Pos: (19, 25) — Klik untuk Set Ulang</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Arah Hadap BFG</div>
+            <div class="btn-group">
+                <button class="btn btn-pink">◄ HADAP KIRI</button>
+                <button class="btn btn-cyan">HADAP KANAN ►</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════ TAB 2: MAGPLANT ════ -->
+    <div class="tab-content" id="tab-mag">
+        <div class="card">
+            <div class="card-title">Monitor Magplant</div>
+            <div class="stat-row"><span class="stat-label">Total Terdeteksi</span><span class="stat-val">8 Mesin</span></div>
+            <div class="stat-row"><span class="stat-label">Siap Panen</span><span class="stat-val neon-green">6 Mesin</span></div>
+            <div class="stat-row"><span class="stat-label">Kosong</span><span class="stat-val neon-red">2 Mesin</span></div>
+            <div class="btn-group" style="margin-top:4px">
+                <button class="btn btn-cyan">Scan Ulang</button>
+                <button class="btn btn-yel">Reset Kosong</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Filter Background</div>
+            <label class="checkbox-row">
+                <input type="checkbox"/> Filter berdasarkan Background ID
+            </label>
+            <div class="input-row">
+                <span class="stat-label" style="white-space:nowrap">BG ID:</span>
+                <input type="text" class="input-text" value="0" />
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">5 Magplant Terdekat ke Farm Pos</div>
+            <div class="mag-list">
+                <div class="mag-item mag-ready">
+                    <span>[*] Mag (15, 23) — Jarak 4</span><span>READY</span>
+                </div>
+                <div class="mag-item mag-ready">
+                    <span>[2] Mag (16, 23) — Jarak 5</span><span>READY</span>
+                </div>
+                <div class="mag-item mag-empty">
+                    <span>[3] Mag (12, 24) — Jarak 8</span><span>EMPTY (03m 12s)</span>
+                </div>
+                <div class="mag-item mag-shared">
+                    <span>[4] Mag (9, 21) — Jarak 14</span><span>EMPTY [Shared] (01m 44s)</span>
+                </div>
+                <div class="mag-item mag-ready">
+                    <span>[5] Mag (22, 18) — Jarak 22</span><span>READY</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════ TAB 3: PAYWALL ════ -->
+    <div class="tab-content" id="tab-paywall">
+        <div class="card">
+            <div class="card-title">Fitur Auto Renew Paywall</div>
+            <label class="checkbox-row"><input type="checkbox" checked/> Aktifkan Sensor &amp; Auto Paywall</label>
+            <label class="checkbox-row"><input type="checkbox" checked/> Auto Renew (Perpanjang sebelum habis ~2 menit)</label>
+            <label class="checkbox-row"><input type="checkbox"/> Auto Beli Paksa (Jika akses dicabut paksa owner)</label>
+            <div class="note" style="margin-top:2px; padding-left:22px">OFF = Aman, bot stop. ON = beli otomatis (hati-hati WL).</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Posisi Paywall Tile</div>
+            <button class="btn btn-cyan">[OK] Paywall Tile: (12, 24) — Klik → Punch Tile untuk Set</button>
+            <div class="stat-row" style="margin-top:6px">
+                <span class="stat-label">Sisa Durasi Akses BFG</span>
+                <span class="stat-val neon-green">58m 39s</span>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-cyan">Cek Paywall Sekarang</button>
+                <button class="btn btn-yel">Reset Posisi</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════ TAB 4: RENTING ════ -->
+    <div class="tab-content" id="tab-rent">
+        <div class="card">
+            <div class="card-title">Auto Sewa Mray / Alat Break</div>
+            <label class="checkbox-row"><input type="checkbox" checked/> Aktifkan Auto Rent / Sewa Mray</label>
+            <div class="input-row">
+                <input type="text" class="input-text" placeholder="World Sewa..." value="THESWORD"/>
+                <button class="btn btn-cyan">World Ini</button>
+            </div>
+            <button class="btn btn-cyan" style="margin-top:2px;">[OK] Rent Station: (18, 24) — Klik → Punch untuk Set</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Status Sewa &amp; Item di Badan</div>
+            <div class="stat-row">
+                <span class="stat-label">Sisa Durasi Sewa Mray</span>
+                <span class="stat-val neon-green">1d 22h 59m 02s</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Status di Badan</span>
+                <span class="stat-val neon-green">TERPASANG [OK] ✓</span>
+            </div>
+            <div class="btn-group" style="margin-top:4px">
+                <button class="btn btn-cyan">Cek &amp; Pasang Sewa</button>
+            </div>
+            <button class="btn btn-pink" style="margin-top:0">⚡ WAR SEWA SEKARANG (SPAM)</button>
+            <button class="btn btn-yel" style="font-size:11px; padding:5px">Reset Posisi Renting Station</button>
+        </div>
+    </div>
+
+    <!-- ════ TAB 5: SETTING ════ -->
+    <div class="tab-content" id="tab-setting">
+        <div class="card">
+            <div class="card-title">Fitur Bot</div>
+            <label class="checkbox-row"><input type="checkbox" checked/> Modfly</label>
+            <label class="checkbox-row"><input type="checkbox"/> AntiLag / FC Prevention</label>
+            <label class="checkbox-row"><input type="checkbox" checked/> Auto Collect Gems</label>
+            <label class="checkbox-row"><input type="checkbox" checked/> Auto Suck Black Gems (≥10.000)</label>
+            <label class="checkbox-row"><input type="checkbox" checked/> Auto Consume Arroz &amp; Clover (tiap 30 menit)</label>
+            <label class="checkbox-row"><input type="checkbox" checked/> Auto Radio</label>
+            <label class="checkbox-row"><input type="checkbox"/> Convert Gems → DL → BGL</label>
+            <label class="checkbox-row"><input type="checkbox" checked/> Web Monitor Vercel &amp; WhatsApp Alert</label>
+        </div>
+        <div class="card">
+            <div class="card-title">Preset Delay / Kecepatan</div>
+            <div class="btn-group">
+                <button class="btn btn-cyan">Fast (60%)</button>
+                <button class="btn btn-cyan">Normal (100%)</button>
+                <button class="btn btn-cyan">Safe (200%)</button>
+                <button class="btn btn-cyan">Pelan (300%)</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════ TAB 6: CONFIG ════ -->
+    <div class="tab-content" id="tab-config">
+        <div class="card">
+            <div class="card-title">Multi-Profile Slot (User 1–3)</div>
+            <div class="stat-label" style="margin-bottom:4px;">Simpan ke Slot:</div>
+            <div class="btn-group">
+                <button class="btn btn-cyan">SAVE USER 1</button>
+                <button class="btn btn-cyan">SAVE USER 2</button>
+                <button class="btn btn-cyan">SAVE USER 3</button>
+            </div>
+            <div class="stat-label" style="margin-top:8px; margin-bottom:4px;">Muat dari Slot:</div>
+            <div class="btn-group">
+                <button class="btn btn-yel">LOAD USER 1</button>
+                <button class="btn btn-yel">LOAD USER 2</button>
+                <button class="btn btn-yel">LOAD USER 3</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Console Log</div>
+            <div class="log-box">
+                [02:45:10]  Starting ZAKICIT PNB v2...<br>
+                [02:45:11]  Auto-find magplant: 8 ditemukan (paling dekat dulu)<br>
+                [02:45:12]  [Rent] Sisa durasi sewa: 1d 22h 59m 02s (TERPASANG)<br>
+                [02:45:14]  [BFG] Hadap KANAN di farm pos (19, 25)<br>
+                [02:45:15]  [PosGuard] Posisi farm terverifikasi OK!<br>
+                [02:45:16]  PNB aktif. Panen berjalan...<br>
+                [02:46:00]  Gems/Jam: 1.25M | WL earned: 568 WL
+            </div>
+            <button class="btn btn-cyan" style="margin-top:4px">Clear Log</button>
+        </div>
+    </div>
+</div>
+
+<script>
+function switchTab(id, btn) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById('tab-' + id).classList.add('active');
+    btn.classList.add('active');
+}
+</script>
+</body>
+</html>
