@@ -1492,6 +1492,11 @@ AddHook("OnVariant", "PNB_VAR", function(var)
     end
 
     if k == "OnDialogRequest" and type(a) == "string" then
+        -- DEBUG: log 40 char pertama dialog buat trace
+        if S.PNB.AutoRent then
+            Log("[DBG] dialog: " .. a:sub(1, 80):gsub("\n", " "))
+        end
+
         -- RENTING 1: Intercept Self-Wrench Popup -> Cek apakah item sudah terpasang, lalu buka clothlease
         if a:find("clothlease", 1, true) and (a:find("dialog_name|popup", 1, true) or a:find("Active effects:", 1, true) or a:find("Cloth Renting", 1, true)) then
             -- Cek apakah item sewaan sudah aktif di badan
@@ -1507,11 +1512,12 @@ AddHook("OnVariant", "PNB_VAR", function(var)
 
         -- RENTING 2: Intercept Menu clothlease -> Parse sisa durasi sewa + pasang jika belum terpasang
         if a:find("clothlease", 1, true) or a:find("Rented Clothing", 1, true) then
+            local clean = StripColor(a)
             -- Cari tombol cloth_ (misal cloth_-258)
-            local btn = a:match("(cloth_%-?%d+)")
-            local hrs = a:match("(%d+)h")
-            local mins = a:match("(%d+)m")
-            local secs = a:match("(%d+)s")
+            local btn = clean:match("(cloth_%-?%d+)")
+            local hrs = clean:match("(%d+)h")
+            local mins = clean:match("(%d+)m")
+            local secs = clean:match("(%d+)s")
 
             if btn and (hrs or mins or secs) then
                 RentClothBtn = btn
@@ -1520,7 +1526,6 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 Log(string.format("`2[Rent]`w Sisa durasi sewa: %s (Status terpasang: %s)", FTime(totalSec), RentEquipped and "YA" or "BELUM"))
 
                 -- PENTING: HANYA PASANG JIKA BELUM TERPASANG!
-                -- Karena tombol ini sifatnya TOGGLE (kalau diklik saat sudah kepasang malah LEPAS!)
                 if not RentEquipped then
                     Log("`9[Rent]`w Item belum dipakai! Memasang item: " .. btn)
                     SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btn .. "\n")
@@ -1529,7 +1534,7 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                     Log("`2[Rent]`w Item sudah terpasang aman di badan. Lewati toggle.")
                 end
             elseif btn then
-                -- Ada tombol cloth tapi format waktu beda (misal baru disewa)
+                -- Ada tombol cloth tapi format waktu beda
                 RentClothBtn = btn
                 Log("`2[Rent]`w Item terdeteksi: " .. btn .. ". Pasang jika belum terpasang.")
                 if not RentEquipped then
@@ -1540,22 +1545,13 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 -- Tidak ada item sewaan terdaftar di menu!
                 RentExpires = 0
                 RentEquipped = false
-                Log("`4[Rent]`w Tidak ada pakaian / item sewaan aktif yang terdeteksi.")
+                Log("`4[Rent]`w Tidak ada sewaan aktif di akun ini (Sewa Habis / Kosong)!")
             end
             RentChecking = false
             return true
         end
 
-        -- RENTING 3: Intercept dialog Renting Station (rent_buy)
-        if a:find("rent_buy", 1, true) or a:find("Renting Station", 1, true) then
-            local rx = a:match("embed_data|x|(%d+)") or S.RentX
-            local ry = a:match("embed_data|y|(%d+)") or S.RentY
-            Log(string.format("`2[Rent]`w Dialog mesin sewa terbuka! Mengirim konfirmasi sewa (%d, %d)...", tonumber(rx), tonumber(ry)))
-            SendPacket(2, string.format("action|dialog_return\ndialog_name|rent_buy\nx|%d|\ny|%d|\n", tonumber(rx), tonumber(ry)))
-            return true
-        end
-
-        -- RENTING 4: Intercept dialog konfirmasi sewa (rent_buyconfirm)
+        -- RENTING 3: Intercept dialog konfirmasi sewa (rent_buyconfirm) — HARUS DI ATAS rent_buy!
         if a:find("rent_buyconfirm", 1, true) or a:find("Purchase Confirmation", 1, true) then
             local wtb = a:match("embed_data|wtb|([%d%-]+)")
             local rx = a:match("embed_data|x|(%d+)") or S.RentX
@@ -1565,6 +1561,15 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 Log(string.format("`2[Rent]`w Konfirmasi WTB terdeteksi (%s)! Mengunci pembelian...", wtb))
                 SendPacket(2, string.format("action|dialog_return\ndialog_name|rent_buyconfirm\nwtb|%s|\nx|%d|\ny|%d|\n", wtb, tonumber(rx), tonumber(ry)))
             end
+            return true
+        end
+
+        -- RENTING 4: Intercept dialog Renting Station (rent_buy)
+        if a:find("rent_buy", 1, true) or a:find("Renting Station", 1, true) then
+            local rx = a:match("embed_data|x|(%d+)") or S.RentX
+            local ry = a:match("embed_data|y|(%d+)") or S.RentY
+            Log(string.format("`2[Rent]`w Dialog mesin sewa terbuka! Mengirim konfirmasi sewa (%d, %d)...", tonumber(rx), tonumber(ry)))
+            SendPacket(2, string.format("action|dialog_return\ndialog_name|rent_buy\nx|%d|\ny|%d|\n", tonumber(rx), tonumber(ry)))
             return true
         end
 
