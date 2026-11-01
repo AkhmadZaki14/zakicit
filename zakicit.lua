@@ -1764,7 +1764,9 @@ local function TabSetting()
             local expTxt = rem > 0 and ("Sisa: " .. FTime(rem)) or "Belum diketahui / Habis"
             CText(expColor, "  " .. expTxt)
             if NButton("Cek Paywall Sekarang", C.neon_cyan, -1, 30) then
-                CheckPaywall(true)
+                RunThread(function()
+                    pcall(CheckPaywall, true)
+                end)
             end
             if ImGui.Button("Reset Pos Paywall", ImVec2(-1, 26)) then
                 S.PaywallX = 0; S.PaywallY = 0; PaywallExpires = 0
