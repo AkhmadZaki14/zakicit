@@ -33,6 +33,8 @@ Setting = {
         AutoPaywall       = false,   -- aktifkan fitur cek/sensor paywall
         AutoRenewPaywall  = false,   -- auto renew sebelum habis (timer ~2 menit sebelum expire)
         AutoBuyPaywall    = false,   -- auto beli ulang kalau dicabut paksa / expired mendadak
+        AutoRent          = false,   -- auto rent mray/item dari renting station
+        RentWorld         = "",      -- world renting station
     },
     World     = "",
     PosX      = 0,
@@ -43,6 +45,8 @@ Setting = {
     TelY      = 0,
     PaywallX  = 0,
     PaywallY  = 0,
+    RentX     = 0,
+    RentY     = 0,
     Delay     = {},
     DelayBuyCheat      = 30,
 }
@@ -94,6 +98,17 @@ local Mag           = {}
 local PaywallExpires   = 0  -- os.time() kapan akses paywall habis
 local CapturePaywall   = false  -- flag: punch berikutnya set PaywallX/Y
 local LastPaywallCheck = 0  -- kapan terakhir wrench untuk cek/renew
+
+-- RENT STATE
+local RentExpires     = 0     -- os.time() kapan durasi sewa habis
+local RentEquipped    = false -- apakah item sewaan sedang terpasang di badan
+local RentChecking    = false -- flag sedang dalam proses cek sisa sewa
+local RentWarActive   = false -- flag sedang dalam mode spam war sewa
+local CaptureRent     = false -- flag: punch berikutnya set RentX/Y
+local LastRentCheck   = 0     -- kapan terakhir cek sisa sewa (self-wrench)
+local RentClothBtn    = ""    -- tombol cloth, misal "cloth_-258"
+local RentWtb         = ""    -- token wtb dari dialog rent_buyconfirm
+local RentSuccess     = false -- konfirmasi sewa sukses dari console
 
 -- ------------------------------------------------------------
 --  UTIL
@@ -818,6 +833,100 @@ local function CheckPaywall(force)
     Sleep(D("RemoteDialog"))
 end
 
+-- ------------------------------------------------------------
+--  RENTING / MRAY SYSTEM (WAR & EQUIP)
+-- ------------------------------------------------------------
+
+-- Step 1: Wrench diri sendiri untuk cek durasi sewa + pasang item
+local function CheckRentStatus(force)
+    if not S.PNB.AutoRent then return end
+    local now = os.time()
+    if not force and now - LastRentCheck < 60 then return end
+    LastRentCheck = now
+    RentChecking = true
+
+    local me = GetLocal()
+    local netId = me and me.netid or 0
+    Log("`9[Rent]`w Memeriksa status durasi sewa pakaian...")
+    SendPacket(2, "action|wrench\n|netid|" .. tostring(netId))
+    Sleep(800)
+end
+
+-- Step 2: WAR Renting (Spam mesin sewa sampai dapat)
+local function DoWarRent()
+    if not S.PNB.AutoRent then return end
+    local rentWorld = (S.PNB.RentWorld or ""):upper()
+    if rentWorld == "" or S.RentX == 0 and S.RentY == 0 then
+        Log("`4[Rent]`w World sewa / Posisi Renting Station belum di-set!")
+        return
+    end
+
+    RentWarActive = true
+    RentSuccess = false
+    Cheat(false)
+    m = false
+
+    -- Pastikan bot di world tempat sewa
+    local curW = WorldNow()
+    if not curW or curW ~= rentWorld then
+        Log("`9[Rent]`w Warp ke world sewa: " .. rentWorld)
+        Run.status = "Warping to Rent World"
+        Join(rentWorld)
+        Sleep(D("Join"))
+    end
+
+    -- Berdiri di dekat mesin sewa
+    local ax, ay = FindAdjacent(S.RentX, S.RentY)
+    if not ax then ax, ay = S.RentX, S.RentY - 1 end
+    Log(string.format("`9[Rent]`w Menuju Renting Station (%d, %d)...", S.RentX, S.RentY))
+    Run.status = "Moving to Rent Station"
+    SlowFindPath(ax, ay, D("PathStep"))
+    Sleep(D("RemoteStep"))
+
+    Log("`2[Rent]`w Standby di depan mesin! Memulai SPAM WAR RENTING...")
+    Run.status = "WAR Renting..."
+
+    -- Loop spam: wrench & kirim buy packet berkali-kali sampai dapat
+    local maxWarSec = 45 -- Maksimal spam 45 detik agar bot tidak hang
+    local startWar = os.time()
+
+    while RentWarActive and (os.time() - startWar < maxWarSec) do
+        if RentSuccess then break end
+
+        -- Wrench mesin sewa
+        WrenchTile(S.RentX, S.RentY)
+        -- Kirim packet rent_buy langsung
+        SendPacket(2, string.format("action|dialog_return\ndialog_name|rent_buy\nx|%d|\ny|%d|\n", S.RentX, S.RentY))
+
+        -- Kirim buyconfirm jika wtb sudah sempat terbaca
+        if RentWtb ~= "" then
+            SendPacket(2, string.format("action|dialog_return\ndialog_name|rent_buyconfirm\nwtb|%s|\nx|%d|\ny|%d|\n", RentWtb, S.RentX, S.RentY))
+        end
+
+        Sleep(250) -- spam interval 250ms (cepat & stabil di server)
+    end
+
+    RentWarActive = false
+
+    if RentSuccess then
+        Log("`2[Rent]`w WAR RENTING BERHASIL! Item berhasil disewa.")
+        Sleep(500)
+        -- Otomatis cek & pasang item jika belum terpasang
+        CheckRentStatus(true)
+        Sleep(1000)
+    else
+        Log("`4[Rent]`w Timeout / Gagal sewa item pada sesi ini.")
+    end
+
+    -- Balik ke world PNB utama
+    if S.World and S.World ~= "" and WorldNow() ~= S.World:upper() then
+        Log("`9[Rent]`w Kembali ke world PNB: " .. S.World)
+        Run.status = "Returning to PNB World"
+        Join(S.World:upper())
+        Sleep(D("Join"))
+    end
+end
+
 local function AutoConvert()
     local now = os.time()
     if now - LastConvert < 10 then return end
@@ -1064,6 +1173,8 @@ function SaveSettings()
             f:write("Setting.TelY=" .. tostring(S.TelY) .. "\n")
             f:write("Setting.PaywallX=" .. tostring(S.PaywallX) .. "\n")
             f:write("Setting.PaywallY=" .. tostring(S.PaywallY) .. "\n")
+            f:write("Setting.RentX=" .. tostring(S.RentX) .. "\n")
+            f:write("Setting.RentY=" .. tostring(S.RentY) .. "\n")
             f:write("Setting.DelayBuyCheat=" .. tostring(S.DelayBuyCheat) .. "\n")
             for k, v in pairs(S.Delay) do
                 f:write("Delay." .. k .. "=" .. tostring(v) .. "\n")
@@ -1169,6 +1280,16 @@ local function Step()
     -- atau sisa waktu < 2 menit: bayar/cek dulu sebelum coba masuk ke farm pos!
     if S.PNB.AutoPaywall and S.PaywallX ~= 0 and (PaywallExpires == 0 or os.time() >= PaywallExpires - 120) then
         CheckPaywall()
+    end
+
+    -- SISTEM RENTING:
+    -- 1. Cek durasi sewa secara periodik / saat awal start
+    if S.PNB.AutoRent and RentExpires == 0 and not RentChecking then
+        CheckRentStatus(false)
+    end
+    -- 2. WAR RENTING: Jika durasi sewa sisa < 60 detik atau belum punya item sewa:
+    if S.PNB.AutoRent and S.RentX ~= 0 and (RentExpires > 0 and os.time() >= RentExpires - 60 or (RentExpires == 0 and not RentChecking)) then
+        DoWarRent()
     end
 
     if changeRemote or inv(5640) == 0 then
@@ -1336,6 +1457,12 @@ AddHook("OnSendPacketRaw", "PNB_RAW", function(pkt)
             Log("Paywall Pos : " .. pkt.px .. ", " .. pkt.py)
             CapturePaywall = false
             GetPos = false
+        elseif CaptureRent then
+            S.RentX = pkt.px
+            S.RentY = pkt.py
+            Log("Renting Station Pos : " .. pkt.px .. ", " .. pkt.py)
+            CaptureRent = false
+            GetPos = false
         end
         return true
     end
@@ -1359,6 +1486,76 @@ AddHook("OnVariant", "PNB_VAR", function(var)
     end
 
     if k == "OnDialogRequest" and type(a) == "string" then
+        -- RENTING 1: Intercept Self-Wrench Popup -> Cek apakah item sudah terpasang, lalu buka clothlease
+        if a:find("dialog_name|popup", 1, true) or a:find("Active effects:", 1, true) then
+            if a:find("clothlease", 1, true) then
+                -- Cek apakah item sewaan (misal Legendary Shard Sword / mray) sudah ada di active effects
+                if a:find("Legendary Shard Sword", 1, true) or a:find("16690", 1, true) then
+                    RentEquipped = true
+                else
+                    RentEquipped = false
+                end
+                -- Lanjut buka menu clothlease
+                SendPacket(2, "action|dialog_return\ndialog_name|popup\nbuttonClicked|clothlease\n")
+                return true
+            end
+        end
+
+        -- RENTING 2: Intercept Menu clothlease -> Parse sisa durasi sewa + pasang jika belum terpasang
+        if a:find("dialog_name|clothlease", 1, true) or a:find("Rented Clothing", 1, true) then
+            -- Parse sisa waktu: add_button_with_icon|cloth_-258|`223h 58m 35s``|
+            local btn, hrs, mins, secs = a:match("add_button_with_icon|(cloth_[%d%-]+)|`?[%a%d]?(%d+)h%s*(%d+)m%s*(%d+)s")
+            if not btn then
+                -- Format alternatif jika tanpa jam (misal cuma menit dan detik):
+                btn, mins, secs = a:match("add_button_with_icon|(cloth_[%d%-]+)|`?[%a%d]?(%d+)m%s*(%d+)s")
+                hrs = 0
+            end
+
+            if btn and mins and secs then
+                RentClothBtn = btn
+                local totalSec = (tonumber(hrs) or 0) * 3600 + (tonumber(mins) or 0) * 60 + (tonumber(secs) or 0)
+                RentExpires = os.time() + totalSec
+                Log(string.format("`2[Rent]`w Sisa durasi sewa: %s (Status terpasang: %s)", FTime(totalSec), RentEquipped and "YA" or "BELUM"))
+
+                -- PENTING: HANYA PASANG JIKA BELUM TERPASANG!
+                -- Karena tombol ini sifatnya TOGGLE (kalau diklik saat sudah kepasang malah LEPAS!)
+                if not RentEquipped then
+                    Log("`9[Rent]`w Item belum dipakai! Memasang item: " .. btn)
+                    SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btn .. "\n")
+                    RentEquipped = true
+                else
+                    Log("`2[Rent]`w Item sudah terpasang aman di badan. Jangan klik toggle.")
+                end
+            else
+                -- Tidak ada item sewaan terdaftar!
+                RentExpires = 0
+                RentEquipped = false
+                Log("`4[Rent]`w Tidak ada pakaian / item sewaan aktif yang terdeteksi.")
+            end
+            RentChecking = false
+            return true
+        end
+
+        -- RENTING 3: Intercept dialog Renting Station (rent_buy)
+        if a:find("dialog_name|rent_buy", 1, true) or a:find("Renting Station", 1, true) then
+            local rx = a:match("embed_data|x|(%d+)") or S.RentX
+            local ry = a:match("embed_data|y|(%d+)") or S.RentY
+            SendPacket(2, string.format("action|dialog_return\ndialog_name|rent_buy\nx|%d|\ny|%d|\n", tonumber(rx), tonumber(ry)))
+            return true
+        end
+
+        -- RENTING 4: Intercept dialog konfirmasi sewa (rent_buyconfirm)
+        if a:find("dialog_name|rent_buyconfirm", 1, true) or a:find("Purchase Confirmation", 1, true) then
+            local wtb = a:match("embed_data|wtb|([%d%-]+)")
+            local rx = a:match("embed_data|x|(%d+)") or S.RentX
+            local ry = a:match("embed_data|y|(%d+)") or S.RentY
+            if wtb then
+                RentWtb = wtb
+                SendPacket(2, string.format("action|dialog_return\ndialog_name|rent_buyconfirm\nwtb|%s|\nx|%d|\ny|%d|\n", wtb, tonumber(rx), tonumber(ry)))
+            end
+            return true
+        end
+
         -- Paywall dialog intercept
         if a:find("paywall", 1, true) or a:find("Pay Wall", 1, true) then
             local mx = a:match("embed_data|x|(%d+)")
@@ -1445,6 +1642,12 @@ AddHook("OnVariant", "PNB_VAR", function(var)
         end
     elseif k == "OnConsoleMessage" and type(a) == "string" then
         if a:find("Radio enabled,", 1, true) then blockSB = true end
+        -- Deteksi sukses sewa dari console message
+        if a:find("rented 1", 1, true) and a:find("for 1 day", 1, true) then
+            RentSuccess = true
+            RentWarActive = false
+            Log("`2[Rent]`w Konfirmasi: " .. StripColor(a))
+        end
         for _, p in ipairs(BlockConsole) do
             if a:find(p, 1, true) then return true end
         end
@@ -1820,7 +2023,7 @@ local function TabSetting()
         -- Toggle 1: Auto Renew (timer sebelum habis)
         local cbRen, vRen = CB("Auto Renew (perpanjang sebelum habis)##arw", S.PNB.AutoRenewPaywall)
         if cbRen then S.PNB.AutoRenewPaywall = vRen end
-        -- Toggle 2: Auto Beli Paksa (kalau dicabut paksa owner)
+        -- Toggle 2: Auto Beli Paksa (kalau dicabut owner)
         local cbBuy, vBuy = CB("Auto Beli Paksa (kalau dicabut owner)##abp", S.PNB.AutoBuyPaywall)
         if cbBuy then S.PNB.AutoBuyPaywall = vBuy end
         if not S.PNB.AutoBuyPaywall then
@@ -1852,6 +2055,46 @@ local function TabSetting()
         end
     else
         CText(C.text_dim, "  Aktifkan 'Auto Renew Paywall' di Fitur untuk setting ini.")
+    end
+
+    Section("Renting Station / Mray")
+    local cbRent, vRent = CB("Aktifkan Auto Rent / Sewa Mray##arn", S.PNB.AutoRent)
+    if cbRent then S.PNB.AutoRent = vRent end
+
+    if S.PNB.AutoRent then
+        local chRw, nvRw = ImGui.InputText("World Sewa##rw", S.PNB.RentWorld, 64)
+        if chRw then S.PNB.RentWorld = tostring(nvRw):upper() end
+        if ImGui.Button("Pakai World Saat Ini##curw_rent", ImVec2(-1, 28)) then
+            local cw = WorldNow()
+            if cw then S.PNB.RentWorld = cw; Log("World Sewa: " .. cw) end
+        end
+
+        local rSet = S.RentX ~= 0 or S.RentY ~= 0
+        if NButton(rSet and string.format("[OK] Rent Station: (%d, %d)", S.RentX, S.RentY) or "[!] Punch Renting Station untuk Set", rSet and C.neon_green or C.neon_red, -1, 34) then
+            CaptureRent = true
+            GetPos = true
+            Log("`9[Rent]`w Punch Renting Station sekarang untuk set posisi...")
+        end
+
+        local remRent = math.max(0, RentExpires - os.time())
+        local rCol = remRent > 300 and C.neon_green or (remRent > 0 and C.neon_yel or C.neon_red)
+        local rTxt = remRent > 0 and ("Sisa Durasi Sewa: " .. FTime(remRent)) or "Sewa Habis / Belum Disewa"
+        CText(rCol, "  " .. rTxt)
+        CText(RentEquipped and C.neon_green or C.neon_red, "  Status di Badan: " .. (RentEquipped and "TERPASANG [OK]" or "BELUM DIPAKAI [!]"))
+
+        if NButton("Cek & Pasang Sewa Sekarang", C.neon_cyan, -1, 32) then
+            RunThread(function()
+                pcall(CheckRentStatus, true)
+            end)
+        end
+        if NButton("WAR SEWA SEKARANG (Spam)", C.neon_pink, -1, 36) then
+            RunThread(function()
+                pcall(DoWarRent)
+            end)
+        end
+        if ImGui.Button("Reset Pos Renting Station", ImVec2(-1, 26)) then
+            S.RentX = 0; S.RentY = 0; RentExpires = 0
+        end
     end
 end
 
