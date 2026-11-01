@@ -17,10 +17,7 @@ Setting = {
         ConvertDLBGL      = false,
         ConvertBGL        = false,
         MaxGems           = 400000,
-        SendToWebhook     = false,
         HideCollected     = false,
-        WebhookURL        = "",
-        WebhookDelay      = 300,
         AutoBuyCheats     = true,
         AutoRadio         = true,
         AutoSuckBgems     = true,
@@ -33,6 +30,7 @@ Setting = {
         EnableMonitor     = true,    -- remote monitoring aktif by default
         ScanBG            = false,   -- filter magplant berdasarkan background ID
         MagBgID           = 0,       -- ID background target magplant
+        AutoPaywall       = false,   -- auto renew paywall
     },
     World     = "",
     PosX      = 0,
@@ -41,6 +39,8 @@ Setting = {
     MagplantY = 0,
     TelX      = 0,
     TelY      = 0,
+    PaywallX  = 0,
+    PaywallY  = 0,
     Delay     = {},
     DelayBuyCheat      = 30,
 }
@@ -72,8 +72,6 @@ local Run = {
     start      = false,
     startTime  = 0,
     status     = "Idle",
-    testHook   = false,
-    lastHook   = 0,
 }
 
 local worldName     = ""
@@ -91,6 +89,9 @@ local LastBuyCheat  = 0
 local savePathUsed  = ""
 local blockSB       = false
 local Mag           = {}
+local PaywallExpires   = 0  -- os.time() kapan akses paywall habis
+local CapturePaywall   = false  -- flag: punch berikutnya set PaywallX/Y
+local LastPaywallCheck = 0  -- kapan terakhir wrench untuk cek/renew
 
 -- ------------------------------------------------------------
 --  UTIL
@@ -774,6 +775,46 @@ local function MakeBGL()
     SendPacket(2, "action|dialog_return\ndialog_name|info_box\nbuttonClicked|make_bgl")
 end
 
+local function CheckPaywall(force)
+    if not S.PNB.AutoPaywall then return end
+    if S.PaywallX == 0 and S.PaywallY == 0 then return end
+    local now = os.time()
+    -- Rate limiting: skip kalau sisa > 2 menit
+    if not force then
+        if PaywallExpires > 0 and now < (PaywallExpires - 120) then return end
+        if now - LastPaywallCheck < 30 then return end
+    end
+    LastPaywallCheck = now
+
+    -- Cari tile adjacent ke paywall untuk berdiri (sama kayak FetchRemote ke mag)
+    local ax, ay = FindAdjacent(S.PaywallX, S.PaywallY)
+    if not ax then
+        -- Fallback: tile tepat di bawah paywall
+        ax, ay = S.PaywallX, S.PaywallY + 1
+    end
+
+    -- Cek jarak player ke adjacent tile, jalan kalau perlu
+    local me = GetLocal()
+    local cx = me and math.floor(me.pos.x / 32) or -999
+    local cy = me and math.floor(me.pos.y / 32) or -999
+    local dist = math.abs(cx - ax) + math.abs(cy - ay)
+
+    if dist > 3 then
+        Log(string.format("`9[Paywall]`w Jalan ke paywall (%d,%d) untuk cek/renew...", S.PaywallX, S.PaywallY))
+        Run.status = "Going to paywall"
+        Cheat(false)
+        SlowFindPath(ax, ay, D("PathStep"))
+        Sleep(D("RemoteStep"))
+        -- Setelah jalan, reset m supaya bot re-setup farming setelah selesai
+        m = false
+    end
+
+    Log(string.format("`9[Paywall]`w Wrench paywall (%d, %d)...", S.PaywallX, S.PaywallY))
+    WrenchTile(S.PaywallX, S.PaywallY)
+    -- Tunggu dialog response (hook OnDialogRequest akan handle hasilnya)
+    Sleep(D("RemoteDialog"))
+end
+
 local function AutoConvert()
     local now = os.time()
     if now - LastConvert < 10 then return end
@@ -981,39 +1022,7 @@ local function PushWebMonitor()
     if _mon and _mon.tick then _mon:tick() end
 end
 
-local function ValidWebhook(url)
-    url = tostring(url or "")
-    return url:find("^https://discord%.com/api/webhooks/") ~= nil
-        or url:find("^https://discordapp%.com/api/webhooks/") ~= nil
-end
 
-local function SendHook(force)
-    if not force and not S.PNB.SendToWebhook then return end
-    if not ValidWebhook(S.PNB.WebhookURL) then return end
-    local me = GetLocal()
-    local pname = me and StripColor(me.name):gsub("#", "") or "?"
-    local data = string.format([[
-{
-  "embeds": [{
-    "title": "ZAKICIT PNB Information",
-    "color": 5793266,
-    "fields": [
-      { "name": "Player", "value": "%s", "inline": false },
-      { "name": "Gems", "value": "%s", "inline": true },
-      { "name": "World", "value": "%s", "inline": true },
-      { "name": "Farm Pos", "value": "X: %d, Y: %d", "inline": true },
-      { "name": "Uptime", "value": "%s", "inline": true },
-      { "name": "DL", "value": "%d", "inline": true },
-      { "name": "BGL", "value": "%d", "inline": true }
-    ]
-  }]
-}]],
-        Esc(pname), FNum(Gems()), Esc(worldName), S.PosX, S.PosY,
-        FTime(NowTime() - Run.startTime),
-        inv(1796), inv(7188))
-    MakeRequest(S.PNB.WebhookURL, "POST", { ["Content-Type"] = "application/json" }, data)
-    Run.lastHook = NowTime()
-end
 
 -- ------------------------------------------------------------
 --  SAVE / LOAD
@@ -1050,6 +1059,8 @@ function SaveSettings()
             f:write("Setting.MagplantY=" .. tostring(S.MagplantY) .. "\n")
             f:write("Setting.TelX=" .. tostring(S.TelX) .. "\n")
             f:write("Setting.TelY=" .. tostring(S.TelY) .. "\n")
+            f:write("Setting.PaywallX=" .. tostring(S.PaywallX) .. "\n")
+            f:write("Setting.PaywallY=" .. tostring(S.PaywallY) .. "\n")
             f:write("Setting.DelayBuyCheat=" .. tostring(S.DelayBuyCheat) .. "\n")
             for k, v in pairs(S.Delay) do
                 f:write("Delay." .. k .. "=" .. tostring(v) .. "\n")
@@ -1150,6 +1161,12 @@ local function Step()
         return
     end
 
+    -- Kalau auto paywall aktif dan belum tau expiry (misal baru reconnect)
+    -- atau sisa waktu < 2 menit: bayar/cek dulu sebelum coba masuk ke farm pos!
+    if S.PNB.AutoPaywall and S.PaywallX ~= 0 and (PaywallExpires == 0 or os.time() >= PaywallExpires - 120) then
+        CheckPaywall()
+    end
+
     if changeRemote or inv(5640) == 0 then
         Run.status = "Smart Mag fetching"
         Cheat(false)
@@ -1203,21 +1220,16 @@ local function Step()
     BuyCheat()
     if S.PNB.AutoSuckBgems then SuckBgems() end
     if S.PNB.AutoConsumables then Consume() end
+    if S.PNB.AutoPaywall then CheckPaywall() end
     if S.PNB.AutoBuyWL or S.PNB.ConvertDLBGL or S.PNB.ConvertBGL then AutoConvert() end
-
-    if S.PNB.SendToWebhook
-        and NowTime() - Run.lastHook >= math.max(10, tonumber(S.PNB.WebhookDelay) or 300) then
-        SendHook(false)
-    end
 end
 
 function StartPNB()
     if Run.start then return end
     changeRemote = false
     m = false
-    RecalcMag()  -- Auto find & sort mag terdekat saat start
+    RecalcMag()
     Run.startTime = NowTime()
-    Run.lastHook = NowTime()
     Run.start = true
     Run.status = "Starting"
     if S.PNB.WearItem and S.PNB.WearItem ~= "" then
@@ -1245,11 +1257,6 @@ end
 RunThread(function()
     while true do
         Sleep(D("Loop"))
-        if Run.testHook then
-            Run.testHook = false
-            local ok, err = pcall(SendHook, true)
-            if ok then Log("`2Test webhook terkirim") else Log("`4Webhook error: " .. tostring(err)) end
-        end
         if Run.start then
             local ok, err = pcall(Step)
             if not ok then
@@ -1286,6 +1293,12 @@ AddHook("OnSendPacketRaw", "PNB_RAW", function(pkt)
             Log("Farming Pos : " .. pkt.px .. ", " .. pkt.py)
             CaptureBreak = false
             GetPos = false
+        elseif CapturePaywall then
+            S.PaywallX = pkt.px
+            S.PaywallY = pkt.py
+            Log("Paywall Pos : " .. pkt.px .. ", " .. pkt.py)
+            CapturePaywall = false
+            GetPos = false
         end
         return true
     end
@@ -1309,6 +1322,28 @@ AddHook("OnVariant", "PNB_VAR", function(var)
     end
 
     if k == "OnDialogRequest" and type(a) == "string" then
+        -- Paywall dialog intercept
+        if a:find("paywall", 1, true) or a:find("Pay Wall", 1, true) then
+            local mx = a:match("embed_data|x|(%d+)")
+            local my = a:match("embed_data|y|(%d+)")
+            local tx = tonumber(mx) or S.PaywallX
+            local ty = tonumber(my) or S.PaywallY
+            -- Cek sisa waktu: dialog saat SUDAH punya akses
+            local mins, secs = a:match("Time left: `%$(%d+) mins, (%d+) secs")
+            if mins then
+                local rem = tonumber(mins) * 60 + tonumber(secs)
+                PaywallExpires = os.time() + rem
+                Log(string.format("`2[Paywall]`w Akses masih aktif. Sisa: %s", FTime(rem)))
+                return true
+            end
+            -- Dialog purchase (belum punya akses / sudah habis)
+            if a:find("Purchase!", 1, true) and S.PNB.AutoPaywall then
+                Log(string.format("`9[Paywall]`w Membeli akses paywall (%d, %d)...", tx, ty))
+                SendPacket(2, string.format("action|dialog_return\ndialog_name|paywall\nx|%d|\ny|%d|\n", tx, ty))
+                PaywallExpires = 0
+            end
+            return true
+        end
         if a:find("MAGPLANT 5000", 1, true) or a:find("magplant_edit", 1, true) then
             local mx = a:match("embed_data|x|(%d+)")
             local my = a:match("embed_data|y|(%d+)")
@@ -1348,6 +1383,14 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             if a:find(p, 1, true) then return true end
         end
     elseif k == "OnTalkBubble" and type(b) == "string" then
+        -- Update PaywallExpires saat berhasil beli akses
+        if b:find("granted access", 1, true) and b:find("Pay Wall", 1, true) then
+            local hrs = b:match("for `%$(%d+) hour")
+            local dur = (tonumber(hrs) or 1) * 3600
+            PaywallExpires = os.time() + dur
+            Log(string.format("`2[Paywall]`w Akses dibeli! Habis dalam %s.", FTime(dur)))
+            return false -- biarkan bubble tampil
+        end
         -- Deteksi habis: kunci ke string resmi Growtopia Magplant, dan hanya jika bot memegang target
         if (b:find("The MAGPLANT 5000 is empty", 1, true) or b:find("MAGPLANT 5000 is empty", 1, true)) and S.MagplantX ~= 0 and S.MagplantY ~= 0 then
             Log(string.format("`4[SmartMag]`w Mag (%d, %d) HABIS! Lapor ke fleet (stok: 0)...", S.MagplantX, S.MagplantY))
@@ -1660,6 +1703,7 @@ local function TabSetting()
         { "AntiLag",           "AntiLag / FC Guard" },
         { "IgnoreOther",       "Ignore Player Lain" },
         { "EnableMonitor",     "Remote Command (Opt-in)" },
+        { "AutoPaywall",       "Auto Renew Paywall" },
     }
     for _, o in ipairs(opts) do
         local c, v = CB(o[2], S.PNB[o[1]])
@@ -1704,36 +1748,34 @@ local function TabSetting()
         end
         if i < #presets then ImGui.SameLine() end
     end
-end
 
--- ─── TAB 4: WEBHOOK ─────────────────────────────────────────
-local function TabWebhook()
-    Section("Discord Webhook")
-    local cw, vw = CB("Aktifkan Webhook", S.PNB.SendToWebhook)
-    if cw then S.PNB.SendToWebhook = vw end
-    local ch, nv = ImGui.InputText("URL##wurl", S.PNB.WebhookURL, 256)
-    if ch then S.PNB.WebhookURL = nv end
-    if S.PNB.WebhookURL ~= "" then
-        if ValidWebhook(S.PNB.WebhookURL) then
-            CText(C.neon_green, "  URL valid")
-        else
-            CText(C.neon_red, "  Harus diawali https://discord.com/api/webhooks/")
+    Section("Paywall")
+    if S.PNB.AutoPaywall then
+        -- Tombol capture via punch tile
+        local pwSet = S.PaywallX ~= 0 or S.PaywallY ~= 0
+        if NButton(pwSet and string.format("[OK] Paywall: (%d, %d)", S.PaywallX, S.PaywallY) or "[!] Punch Tile Paywall untuk Set", pwSet and C.neon_cyan or C.neon_red, -1, 34) then
+            CapturePaywall = true
+            GetPos = true
+            Log("`9[Paywall]`w Punch tile paywall sekarang untuk set posisi...")
         end
-    end
-    local c2, nd = ImGui.InputInt("Interval (detik)", S.PNB.WebhookDelay)
-    if c2 then S.PNB.WebhookDelay = math.max(10, nd) end
-    if Run.start and S.PNB.SendToWebhook then
-        local d  = math.max(10, tonumber(S.PNB.WebhookDelay) or 300)
-        local el = NowTime() - Run.lastHook
-        Bar(math.min(1, el / d), "Berikutnya " .. FTime(math.max(0, d - el)))
-    end
-    Sp(4)
-    if NButton("Test Webhook Sekarang", C.neon_cyan, -1, 40) then
-        Log("Mengirim test..."); Run.testHook = true
+        if pwSet then
+            local rem = math.max(0, PaywallExpires - os.time())
+            local expColor = rem > 300 and C.neon_green or (rem > 0 and C.neon_yel or C.neon_red)
+            local expTxt = rem > 0 and ("Sisa: " .. FTime(rem)) or "Belum diketahui / Habis"
+            CText(expColor, "  " .. expTxt)
+            if NButton("Cek Paywall Sekarang", C.neon_cyan, -1, 30) then
+                CheckPaywall(true)
+            end
+            if ImGui.Button("Reset Pos Paywall", ImVec2(-1, 26)) then
+                S.PaywallX = 0; S.PaywallY = 0; PaywallExpires = 0
+            end
+        end
+    else
+        CText(C.text_dim, "  Aktifkan 'Auto Renew Paywall' di Fitur untuk setting ini.")
     end
 end
 
--- ─── TAB 5: CONFIG ──────────────────────────────────────────
+-- ─── TAB 4: CONFIG ──────────────────────────────────────────
 local function TabConfig()
     if NButton("SAVE SETTINGS", C.neon_green, -1, 44) then SaveSettings() end
     Sp(4)
@@ -1784,7 +1826,6 @@ AddHook("OnDraw", "ZAKICIT_DRAW", function()
             if ImGui.BeginTabItem("Farm")     then TabFarm();     ImGui.EndTabItem() end
             if ImGui.BeginTabItem("Mag")      then TabMag();      ImGui.EndTabItem() end
             if ImGui.BeginTabItem("Setting")  then TabSetting();  ImGui.EndTabItem() end
-            if ImGui.BeginTabItem("Webhook")  then TabWebhook();  ImGui.EndTabItem() end
             if ImGui.BeginTabItem("Config")   then TabConfig();   ImGui.EndTabItem() end
             if ImGui.BeginTabItem("About")    then TabAbout();    ImGui.EndTabItem() end
             ImGui.EndTabBar()
