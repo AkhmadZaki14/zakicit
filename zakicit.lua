@@ -1530,11 +1530,6 @@ AddHook("OnVariant", "PNB_VAR", function(var)
     end
 
     if k == "OnDialogRequest" and type(a) == "string" then
-        -- DEBUG: log 40 char pertama dialog buat trace
-        if S.PNB.AutoRent then
-            Log("[DBG] dialog: " .. a:sub(1, 80):gsub("\n", " "))
-        end
-
         -- RENTING 1: Intercept Self-Wrench Popup -> Cek apakah item sewaan aktif di Active Effects
         if a:find("clothlease", 1, true) and (a:find("dialog_name|popup", 1, true) or a:find("Active effects:", 1, true) or a:find("Cloth Renting", 1, true)) then
             -- Sensor dinamis: cek apakah item sewaan ada di Active Effects
@@ -1638,22 +1633,27 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             local my = a:match("embed_data|y|(%d+)")
             local tx = tonumber(mx) or S.PaywallX
             local ty = tonumber(my) or S.PaywallY
-            -- Cek sisa waktu: dialog saat SUDAH punya akses
-            local mins, secs = a:match("Time left: `%$(%d+) mins, (%d+) secs")
-            if mins then
-                local rem = tonumber(mins) * 60 + tonumber(secs)
-                PaywallExpires = os.time() + rem
-                Log(string.format("`2[Paywall]`w Akses masih aktif. Sisa: %s", FTime(rem)))
-                return true
+
+            -- Cek sisa waktu: parse format jam, menit, detik (kebal format variasi)
+            local clean = a:gsub("`.", "")
+            if clean:find("Time left:", 1, true) then
+                local hrs  = tonumber(clean:match("(%d+)%s*hour")) or 0
+                local mins = tonumber(clean:match("(%d+)%s*min"))  or 0
+                local secs = tonumber(clean:match("(%d+)%s*sec"))  or 0
+                local rem = hrs * 3600 + mins * 60 + secs
+                if rem > 0 then
+                    PaywallExpires = os.time() + rem
+                    Log(string.format("`2[Paywall]`w Akses masih aktif. Sisa: %s", FTime(rem)))
+                    return true
+                end
             end
+
             -- Dialog purchase (belum punya akses / habis / dicabut paksa)
             if a:find("Purchase!", 1, true) and S.PNB.AutoPaywall then
-                -- Cek apakah dicabut paksa (masih ada sisa waktu > 60s di memori tapi akses hilang)
                 local isRevoked = (PaywallExpires > os.time() + 60)
                 local allowBuy = false
 
                 if isRevoked then
-                    -- Kasus dicabut paksa oleh owner world
                     if S.PNB.AutoBuyPaywall then
                         Log("`3[Paywall]`w Akses DICABUT PAKSA! Toggle beli paksa ON -> Membeli ulang...")
                         allowBuy = true
@@ -1664,7 +1664,6 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                         return true
                     end
                 else
-                    -- Kasus expired normal
                     if S.PNB.AutoRenewPaywall or S.PNB.AutoBuyPaywall then
                         Log(string.format("`9[Paywall]`w Membeli akses paywall (%d, %d)...", tx, ty))
                         allowBuy = true
@@ -1680,6 +1679,9 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                     SendPacket(2, string.format("action|dialog_return\ndialog_name|paywall\nx|%d|\ny|%d|\n", tx, ty))
                     PaywallExpires = 0
                 end
+            else
+                -- Tutup dialog tanpa aksi (jangan biarkan menggantung di layar)
+                SendPacket(2, "action|dialog_return\ndialog_name|paywall\nbuttonClicked|\n")
             end
             return true
         end
