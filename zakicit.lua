@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T03:15:00 CACHE_BUST_OPTIMISTIC_RENT
+--  BUILD: 2026-11-03T03:30:00 CACHE_BUST_DIAGNOSTIC
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -1061,8 +1061,8 @@ local function CheckRentStatus(force)
 
     local me = GetLocal()
     local netId = me and me.netid or 0
-    Log("`9[Rent]`w Cek status sewa pakaian (silent)...")
-    SendPacket(2, "action|wrench\n|netid|" .. tostring(math.max(1, netId)))
+    Log(string.format("`9[Rent]`w Cek status sewa (silent, netid=%d)...", netId))
+    SendPacket(2, "action|wrench\n|netid|" .. tostring(math.max(1, netId)) .. "\n")
     -- Tunggu hingga dialog selesai diproses di hook (maksimal 6 detik safety timeout)
     for _ = 1, 12 do
         if not RentChecking then break end
@@ -1979,6 +1979,11 @@ AddHook("OnVariant", "PNB_VAR", function(var)
     end
 
     if k == "OnDialogRequest" and type(a) == "string" then
+        -- DIAGNOSTIC LOGGER: Cetak ringkasan setiap dialog yang masuk
+        if a:find("clothlease", 1, true) or a:find("Active effects", 1, true) or a:find("Rented Clothing", 1, true) then
+            Log(string.format("`3[RentDbg]`w Dialog Masuk! WrenchFlag=%s, Isi=%s", tostring(BotTriggeredWrench), a:sub(1, 80)))
+        end
+
         -- RENTING 1: Intercept Self-Wrench Popup -> deteksi RentEquipped dari Active effects: lalu buka clothlease
         -- Hanya diproses jika BotTriggeredWrench (bot yang wrench, bukan user manual)
         if BotTriggeredWrench and (a:find("end_dialog|popup", 1, true) or a:find("clothlease", 1, true)) and a:find("add_button|clothlease|", 1, true) then
@@ -2376,7 +2381,7 @@ local function TabFarm()
     -- Status mini
     CText(running and C.neon_green or C.neon_red,
         running and ("  " .. Run.status) or "  Idle")
-    CText(C.text_dim, "  Build: 2026-11-03 03:15 | Branch: main | Optimistik Rent")
+    CText(C.text_dim, "  Build: 2026-11-03 03:30 | Branch: main | Diagnostic")
     Sp(4)
     Sep(C.border)
 
