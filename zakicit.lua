@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T04:15:00 DYNAMIC_SWITCH_ITEM
+--  BUILD: 2026-11-03T04:30:00 ANTI_MISCLICK_BTN
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -2027,21 +2027,23 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 targetFrame = "19676"; itemName = "Mythical Ray (MRay)"
             end
             -- Cari baris yang punya staticframe targetFrame
-            local btnName = "cloth_-258"
+            local btnName = ""   -- kosong = tidak ditemukan, jangan klik!
             local totalSec = 0
             for line in clean:gmatch("[^\r\n]+") do
                 if line:find(targetFrame, 1, true) and line:find("cloth_", 1, true) then
-                    btnName = line:match("(cloth_%-?%d+)") or btnName
-                    -- Durasi ada di string setelah | dan sebelum |staticframe
-                    -- Format: cloth_-258|23h 58m 35s|staticframe|...
+                    btnName = line:match("(cloth_%-?%d+)") or ""
                     local durStr = line:match("cloth_%-?%d+|(.-)%|staticframe") or ""
                     local days = tonumber(durStr:match("(%d+)d")) or 0
                     local hrs  = tonumber(durStr:match("(%d+)h")) or 0
                     local mins = tonumber(durStr:match("(%d+)m")) or 0
                     local secs = tonumber(durStr:match("(%d+)s")) or 0
                     totalSec = days * 86400 + hrs * 3600 + mins * 60 + secs
+                    Log(string.format("`2[Rent]`w Parser: targetFrame=%s -> btn=%s durasi=%ds", targetFrame, btnName, totalSec))
                     break
                 end
+            end
+            if btnName == "" then
+                Log(string.format("`4[Rent]`w TIDAK DITEMUKAN tombol untuk %s (frame=%s) di dialog clothlease!", itemName, targetFrame))
             end
             RentClothBtn = btnName
             if totalSec > 0 then
@@ -2053,6 +2055,8 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             -- Pasang HANYA jika belum terpasang (RentEquipped di-set akurat oleh RENTING 1 / OnConsoleMessage)
             if RentEquipped then
                 Log("`2[Rent]`w Item SUDAH TERPASANG. TIDAK DIKLIK (anti-copot).")
+            elseif btnName == "" then
+                Log("`4[Rent]`w Tombol item tidak ditemukan, BATAL klik pasang agar tidak salah copot!")
             else
                 Log(string.format("`4[Rent]`w Item BELUM TERPASANG! Mengirim klik pasang (%s) dalam 350ms...", btnName))
                 -- Delay manusiawi agar packet tidak di-drop oleh anti-cheat server GT
@@ -2397,7 +2401,7 @@ local function TabFarm()
     -- Status mini
     CText(running and C.neon_green or C.neon_red,
         running and ("  " .. Run.status) or "  Idle")
-    CText(C.text_dim, "  Build: 2026-11-03 04:15 | DYNAMIC SWITCH")
+    CText(C.text_dim, "  Build: 2026-11-03 04:30 | ANTI MISCLICK")
     Sp(4)
     Sep(C.border)
 
