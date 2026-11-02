@@ -124,6 +124,7 @@ local WebhookQueue     = {}
 local RentExpires     = 0     -- kapan durasi sewa habis
 local RentEquipped    = false -- apakah item sewaan sedang terpasang di badan
 local RentChecking    = false -- flag sedang dalam proses cek sisa sewa
+local BotTriggeredWrench = false -- true = bot yang kirim wrench (silent), false = user manual klik wrench
 local RentWarActive   = false -- flag sedang dalam mode spam war sewa
 local CaptureRent     = false -- flag: punch berikutnya set RentX/Y
 local LastRentCheck   = 0     -- kapan terakhir cek sisa sewa (self-wrench)
@@ -1048,21 +1049,45 @@ end
 --  RENTING / MRAY SYSTEM (WAR & EQUIP)
 -- ------------------------------------------------------------
 
--- Step 1: Wrench diri sendiri untuk cek durasi sewa + pasang item
+-- Step 1: Cek & pasang item sewa secara SILENT (tanpa popup layar mengganggu user)
+-- Gunakan direct packet ke menu clothlease, bukan self-wrench yang buka popup profil!
 local function CheckRentStatus(force)
     if not S.PNB.AutoRent then return end
     local now = NowTime()
-    -- Anti-spam: minimal jeda 30 detik untuk self-wrench
     if not force and now - LastRentCheck < 30 then return end
     LastRentCheck = now
     RentChecking = true
+    BotTriggeredWrench = true
 
+    -- Kirim langsung packet buka menu clothlease (silent, tidak buka popup profil layar)
+    -- Dengan cara wrench diri sendiri LALU intercept dialog clothlease-nya di OnDialogRequest
     local me = GetLocal()
     local netId = me and me.netid or 0
-    Log("`9[Rent]`w Memeriksa status durasi sewa pakaian (Self-Wrench)...")
     SendPacket(2, "action|wrench\n|netid|" .. tostring(math.max(1, netId)))
-    Sleep(2000) -- beri waktu cukup untuk server membalas dialog popup
-    -- Auto-reset RentChecking jika dialog tidak datang (timeout safety)
+    Sleep(2000) -- beri waktu server balas dialog
+
+    -- Reset flag agar user bisa buka profil sendiri bebas lagi
+    BotTriggeredWrench = false
+    RentChecking = false
+end
+
+-- Fungsi silent untuk langsung pasang item sewa tanpa self-wrench (dipanggil jika clothlease sudah ada)
+local function SilentEquipRent()
+    if RentClothBtn == "" then return end
+    local now = NowTime()
+    if now - RentLastToggle < 10 then return end
+    RentLastToggle = now
+    Log("`9[Rent]`w Pasang item sewa secara silent: " .. RentClothBtn)
+    SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. RentClothBtn .. "\n")
+    Sleep(1000)
+    -- Cek ulang dengan CheckRentStatus setelah pasang
+    RentChecking = true
+    BotTriggeredWrench = true
+    local me = GetLocal()
+    local netId = me and me.netid or 0
+    SendPacket(2, "action|wrench\n|netid|" .. tostring(math.max(1, netId)))
+    Sleep(2000)
+    BotTriggeredWrench = false
     RentChecking = false
 end
 
@@ -1715,13 +1740,28 @@ local function Step()
             end
             Sleep(D("FaceDelay"))
 
-            -- [GUARD ANTI-TANGAN-KOSONG] Jangan pernah BFG jika fitur sewa aktif tapi Mray belum terpasang
-            if S.PNB.AutoRent and not RentEquipped and (RentExpires == 0 or NowTime() >= RentExpires) then
-                Log("`4[RentGuard]`w Mray / alat sewa BELUM terpasang! Tahan cheat agar tidak bfg tangan kosong.")
-                Run.status = "Menunggu Sewa Mray"
+            -- [GUARD ANTI-TANGAN-KOSONG MUTLAK]
+            -- Jika fitur AutoRent aktif dan item BELUM terpasang di badan (RentEquipped == false):
+            -- BOT WAJIB MEMAKAI BARANG SEWAAN. DILARANG KERAS MEMUKUL / BFG!
+            if S.PNB.AutoRent and not RentEquipped then
                 Cheat(false)
                 m = false
-                Sleep(3000)
+                if RentExpires > NowTime() then
+                    -- Durasi sewa masih ada, tapi item belum terpasang di badan:
+                    Log("`9[RentGuard]`w Barang sewaan ada (" .. FTime(RentExpires - NowTime()) .. ") tapi BELUM TERPASANG! Pasang sekarang...")
+                    Run.status = "Memasang Barang Sewa..."
+                    if RentClothBtn ~= "" then
+                        SilentEquipRent()
+                    else
+                        CheckRentStatus(true)
+                    end
+                else
+                    -- Sewa habis atau belum disewa: WAJIB SEWA, JANGAN PASRAH!
+                    Log("`4[RentGuard]`w Durasi sewa habis/belum ada! Otomatis menuju world sewa untuk sewa...")
+                    Run.status = "Menuju World Sewa..."
+                    DoWarRent()
+                end
+                Sleep(2000)
                 return
             end
 
@@ -1947,9 +1987,9 @@ AddHook("OnVariant", "PNB_VAR", function(var)
     end
 
     if k == "OnDialogRequest" and type(a) == "string" then
-        -- RENTING 1: Intercept Self-Wrench Popup -> HANYA JIKA sedang dalam proses CheckRentStatus (RentChecking == true)
-        -- Jika user manual wrench diri sendiri, jangan di-intercept agar menu profil/cheats tetap bisa dibuka bebas!
-        if RentChecking and a:find("clothlease", 1, true) and (a:find("dialog_name|popup", 1, true) or a:find("Active effects:", 1, true) or a:find("Cloth Renting", 1, true)) then
+        -- RENTING 1: Intercept Self-Wrench Popup -> HANYA JIKA bot yang memicu (BotTriggeredWrench == true)
+        -- Jika USER MANUAL yang klik wrench badannya sendiri, BIARKAN POPUP TERBUKA BEBAS tanpa diganggu script!
+        if BotTriggeredWrench and a:find("clothlease", 1, true) and (a:find("dialog_name|popup", 1, true) or a:find("Active effects:", 1, true) or a:find("Cloth Renting", 1, true)) then
             -- Sensor dinamis: cek apakah item sewaan ada di Active Effects
             local activeEff = a:match("Active effects:(.-)You have") or a:match("Active effects:(.-)%|") or a:match("Active effects:(.*)") or ""
             local effLow = activeEff:lower()
