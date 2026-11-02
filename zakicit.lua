@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T04:00:00 POPUP_UNBOUND
+--  BUILD: 2026-11-03T04:15:00 DYNAMIC_SWITCH_ITEM
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -2003,8 +2003,8 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             else -- Auto-Detect
                 isEquipped = effectsPart:find("16690", 1, true) ~= nil or effectsPart:find("16940", 1, true) ~= nil or effectsPart:find("19676", 1, true) ~= nil
             end
-            RentEquipped = (isEquipped ~= nil and isEquipped ~= false)
-            Log(string.format("`2[Rent]`w Status di badan (Active effects): %s", RentEquipped and "`2TERPASANG`w" or "`4BELUM`w"))
+            RentEquipped = (isEquipped == true)
+            Log(string.format("`2[Rent]`w Target: %s | Status di badan: %s", target, RentEquipped and "`2TERPASANG`w" or "`4BELUM/BUKAN TARGET`w"))
             -- Lanjut buka menu clothlease untuk baca durasi (beri delay manusiawi agar tidak di-drop server)
             RunThread(function()
                 Sleep(250)
@@ -2212,30 +2212,37 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             Log("`2[Rent]`w Konfirmasi: " .. StripColor(a))
         end
         -- SENSOR PRESISI DARI NAMA MOD RESMI GROWTOPIA
-        if a:find("Legendary Shard Sword mod added", 1, true) then
-            RentEquipped = true
-            RentLastToggle = NowTime()
-            Log("`2[Rent]`w Mod LSS AKTIF (Legendary Shard Sword mod added). Status: TERPASANG [OK]")
-        elseif a:find("Legendary Shard Sword mod removed", 1, true) then
-            RentEquipped = false
-            RentLastToggle = NowTime()
-            Log("`4[Rent]`w Mod LSS COPOT (Legendary Shard Sword mod removed). Status: DILEPAS [!]")
-        elseif a:find("Legendary Powers mod added", 1, true) then
-            RentEquipped = true
-            RentLastToggle = NowTime()
-            Log("`2[Rent]`w Mod LRay AKTIF (Legendary Powers mod added). Status: TERPASANG [OK]")
-        elseif a:find("Legendary Powers mod removed", 1, true) then
-            RentEquipped = false
-            RentLastToggle = NowTime()
-            Log("`4[Rent]`w Mod LRay COPOT (Legendary Powers mod removed). Status: DILEPAS [!]")
-        elseif a:find("Mythical Ray mod added", 1, true) or a:find("Mythical Powers mod added", 1, true) then
-            RentEquipped = true
-            RentLastToggle = NowTime()
-            Log("`2[Rent]`w Mod MRay AKTIF. Status: TERPASANG [OK]")
-        elseif a:find("Mythical Ray mod removed", 1, true) or a:find("Mythical Powers mod removed", 1, true) then
-            RentEquipped = false
-            RentLastToggle = NowTime()
-            Log("`4[Rent]`w Mod MRay COPOT. Status: DILEPAS [!]")
+        -- Hanya update RentEquipped jika item yang berubah SESUAI TARGET
+        local rentTarget = S.PNB.RentTargetItem or "Auto-Detect"
+        local isLSS  = a:find("Legendary Shard Sword mod", 1, true)
+        local isLRay = a:find("Legendary Powers mod", 1, true)
+        local isMRay = a:find("Mythical Ray mod", 1, true) or a:find("Mythical Powers mod", 1, true)
+        local isAdded   = a:find("mod added", 1, true)
+        local isRemoved = a:find("mod removed", 1, true)
+
+        local targetMatch = false
+        if rentTarget:find("LSS", 1, true) or rentTarget:find("Legendary Shard Sword", 1, true) then
+            targetMatch = isLSS ~= nil
+        elseif rentTarget:find("LRay", 1, true) or rentTarget:find("Legendary Ray", 1, true) then
+            targetMatch = isLRay ~= nil
+        elseif rentTarget:find("MRay", 1, true) or rentTarget:find("Mythical Ray", 1, true) then
+            targetMatch = isMRay ~= nil
+        else -- Auto-Detect: semua item sewa valid
+            targetMatch = (isLSS or isLRay or isMRay) ~= nil
+        end
+
+        if targetMatch then
+            if isAdded then
+                RentEquipped = true
+                RentLastToggle = NowTime()
+                Log("`2[Rent]`w Item target TERPASANG (mod added sesuai target: " .. rentTarget .. ")")
+            elseif isRemoved then
+                RentEquipped = false
+                RentLastToggle = NowTime()
+                Log("`4[Rent]`w Item target DILEPAS (mod removed sesuai target: " .. rentTarget .. ")")
+            end
+        elseif (isLSS or isLRay or isMRay) then
+            Log("`3[Rent]`w Mod item lain berubah (bukan target), RentEquipped tidak diubah.")
         end
         for _, p in ipairs(BlockConsole) do
             if a:find(p, 1, true) then return true end
@@ -2390,7 +2397,7 @@ local function TabFarm()
     -- Status mini
     CText(running and C.neon_green or C.neon_red,
         running and ("  " .. Run.status) or "  Idle")
-    CText(C.text_dim, "  Build: 2026-11-03 04:00 | NO WRENCHFLAG")
+    CText(C.text_dim, "  Build: 2026-11-03 04:15 | DYNAMIC SWITCH")
     Sp(4)
     Sep(C.border)
 
@@ -2714,8 +2721,16 @@ local function TabSetting()
         local rentTargets = { "Auto-Detect", "Legendary Shard Sword", "Mythical Ray", "Legendary Ray", "Legendary Infinity Fist" }
         for _, itm in ipairs(rentTargets) do
             if ImGui.Selectable(itm .. "##rtg", (S.PNB.RentTargetItem or "Auto-Detect") == itm) then
-                S.PNB.RentTargetItem = itm
-                Log("`2[Rent]`w Target item sewa: " .. itm)
+                if S.PNB.RentTargetItem ~= itm then
+                    S.PNB.RentTargetItem = itm
+                    RentEquipped = false   -- RESET: item target baru belum tentu terpasang!
+                    RentClothBtn = ""
+                    Log("`2[Rent]`w Target item sewa diubah ke: " .. itm .. " -> Mengecek & memasang...")
+                    RunThread(function()
+                        Sleep(200)
+                        pcall(CheckRentStatus, true)
+                    end)
+                end
             end
         end
         Sp(4)
