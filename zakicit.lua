@@ -1980,77 +1980,76 @@ AddHook("OnVariant", "PNB_VAR", function(var)
     end
 
     if k == "OnDialogRequest" and type(a) == "string" then
-        -- RENTING 1: Intercept Self-Wrench Popup -> HANYA JIKA bot yang memicu (BotTriggeredWrench == true)
-        -- Jika USER MANUAL yang klik wrench badannya sendiri, BIARKAN POPUP TERBUKA BEBAS tanpa diganggu script!
-        if BotTriggeredWrench and a:find("clothlease", 1, true) and (a:find("dialog_name|popup", 1, true) or a:find("Active effects:", 1, true) or a:find("Cloth Renting", 1, true)) then
-            -- Popup profil: langsung buka menu clothlease, JANGAN coba deteksi dari Active effects
-            -- Sumber kebenaran status terpasang hanya dari dialog clothlease itu sendiri
-            Log("`9[Rent]`w Membuka Cloth Renting dari popup...")
+        -- RENTING 1: Intercept Self-Wrench Popup -> deteksi RentEquipped dari Active effects: lalu buka clothlease
+        -- Hanya diproses jika BotTriggeredWrench (bot yang wrench, bukan user manual)
+        if BotTriggeredWrench and a:find("dialog_name|popup", 1, true) and a:find("clothlease", 1, true) then
+            local clean = StripColor(a)
+            local target = S.PNB.RentTargetItem or "Auto-Detect"
+            -- Ambil bagian Active effects: saja
+            local effectsPart = clean:match("Active effects:(.-)end_dialog") or ""
+            local isEquipped = false
+            if target:find("LSS", 1, true) or target:find("Legendary Shard Sword", 1, true) then
+                isEquipped = effectsPart:find("16690", 1, true) ~= nil or effectsPart:lower():find("shard sword", 1, true) ~= nil
+            elseif target:find("LRay", 1, true) or target:find("Legendary Ray", 1, true) then
+                isEquipped = effectsPart:find("16940", 1, true) ~= nil or effectsPart:lower():find("legendary ray", 1, true) ~= nil
+            elseif target:find("MRay", 1, true) or target:find("Mythical Ray", 1, true) then
+                isEquipped = effectsPart:find("19676", 1, true) ~= nil or effectsPart:lower():find("mythical ray", 1, true) ~= nil
+            else -- Auto-Detect
+                isEquipped = effectsPart:find("16690", 1, true) ~= nil or effectsPart:find("16940", 1, true) ~= nil or effectsPart:find("19676", 1, true) ~= nil
+            end
+            RentEquipped = isEquipped
+            Log(string.format("`2[Rent]`w Status di badan (Active effects): %s", RentEquipped and "`2TERPASANG`w" or "`4BELUM`w"))
+            -- Lanjut buka menu clothlease untuk baca durasi
             SendPacket(2, "action|dialog_return\ndialog_name|popup\nbuttonClicked|clothlease\n")
             return true
         end
 
-        -- RENTING 2: Intercept Menu clothlease -> Parse durasi (D, H, M, S) + pasang jika belum terpasang
-        if a:find("clothlease", 1, true) or a:find("Rented Clothing", 1, true) then
+        -- RENTING 2: Intercept Menu Rented Clothing (clothlease) -> parse durasi + pasang jika perlu
+        -- Format: add_button_with_icon|cloth_-258|`223h 58m 35s``|staticframe|16690||
+        if a:find("end_dialog|clothlease|", 1, true) then
             local clean = StripColor(a)
-            -- DEBUG: Log raw dialog untuk diagnosis
-            local shortRaw = clean:sub(1, 300)
-            Log("`3[Rent:RAW]`w " .. shortRaw)
-            -- Cari tombol cloth_ (misal cloth_-258) dan icon item ID (misal 16690 / 16940 / 19676)
-            local btn = clean:match("(cloth_%-?%d+)")
-            local rawId = clean:match("cloth_%-?%d+|.-|staticframe|(%d+)") or clean:match("staticframe|(%d+)")
-            if rawId then RentItemId = rawId end
-
-            -- Mapping staticframe ID:
-            -- LSS  = 16690
-            -- LRay = 16940
-            -- MRay = 19676
-            local idName = "Unknown"
-            if rawId == "16690" then idName = "Legendary Shard Sword (LSS)"
-            elseif rawId == "16940" then idName = "Legendary Ray (LRay)"
-            elseif rawId == "19676" then idName = "Mythical Ray (MRay)"
+            local target = S.PNB.RentTargetItem or "Auto-Detect"
+            -- Pilih targetFrame berdasarkan setting user
+            local targetFrame = "16690"  -- default LSS
+            local itemName = "Legendary Shard Sword (LSS)"
+            if target:find("LRay", 1, true) then
+                targetFrame = "16940"; itemName = "Legendary Ray (LRay)"
+            elseif target:find("MRay", 1, true) then
+                targetFrame = "19676"; itemName = "Mythical Ray (MRay)"
             end
-
-            -- Cek status fisik terpasang langsung dari teks dialog clothlease:
-            local cleanLow = clean:lower()
-            if cleanLow:find("unequip", 1, true) or cleanLow:find("take off", 1, true) then
-                RentEquipped = true
-                Log(string.format("`2[Rent]`w Deteksi Dialog: Item %s SEDANG TERPASANG di badan [OK]", idName))
-            elseif cleanLow:find("equip", 1, true) or cleanLow:find("wear", 1, true) then
-                RentEquipped = false
-                Log(string.format("`4[Rent]`w Deteksi Dialog: Item %s BELUM TERPASANG di badan [!]", idName))
-            end
-
-            -- Parse durasi lengkap: hari (d), jam (h), menit (m), detik (s)
-            local days = tonumber(clean:match("(%d+)d")) or 0
-            local hrs  = tonumber(clean:match("(%d+)h")) or 0
-            local mins = tonumber(clean:match("(%d+)m")) or 0
-            local secs = tonumber(clean:match("(%d+)s")) or 0
-            local totalSec = days * 86400 + hrs * 3600 + mins * 60 + secs
-
-            if btn and totalSec > 0 then
-                RentClothBtn = btn
-                RentExpires = NowTime() + totalSec
-                Log(string.format("`2[Rent]`w Sisa durasi %s: %s (Status: %s)", idName, FTime(totalSec), RentEquipped and "TERPASANG" or "BELUM"))
-
-                local now = NowTime()
-                if RentEquipped then
-                    Log("`2[Rent]`w Item sudah terpasang di badan. Tombol TIDAK diklik agar tidak copot!")
-                else
-                    RentLastToggle = now
-                    Log(string.format("`9[Rent]`w Memasang item %s (tombol: %s)...", idName, btn))
-                    SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btn .. "\n")
-                    RentEquipped = true
+            -- Cari baris yang punya staticframe targetFrame
+            local btnName = "cloth_-258"
+            local totalSec = 0
+            for line in clean:gmatch("[^\r\n]+") do
+                if line:find(targetFrame, 1, true) and line:find("cloth_", 1, true) then
+                    btnName = line:match("(cloth_%-?%d+)") or btnName
+                    -- Durasi ada di string setelah | dan sebelum |staticframe
+                    -- Format: cloth_-258|23h 58m 35s|staticframe|...
+                    local durStr = line:match("cloth_%-?%d+|(.-)%|staticframe") or ""
+                    local days = tonumber(durStr:match("(%d+)d")) or 0
+                    local hrs  = tonumber(durStr:match("(%d+)h")) or 0
+                    local mins = tonumber(durStr:match("(%d+)m")) or 0
+                    local secs = tonumber(durStr:match("(%d+)s")) or 0
+                    totalSec = days * 86400 + hrs * 3600 + mins * 60 + secs
+                    break
                 end
-            elseif btn then
-                RentClothBtn = btn
-                Log("`2[Rent]`w Item terdeteksi: " .. btn .. ". Update status tanpa klik toggle.")
-            else
-                -- Tidak ada item sewaan terdaftar di menu!
-                RentExpires = 0
-                RentEquipped = false
-                Log("`4[Rent]`w Tidak ada sewaan aktif di akun ini (Sewa Habis / Kosong)!")
             end
+            RentClothBtn = btnName
+            if totalSec > 0 then
+                RentExpires = NowTime() + totalSec
+                Log(string.format("`2[Rent]`w Sisa durasi %s: %s", itemName, FTime(totalSec)))
+            else
+                Log("`4[Rent]`w Item target tidak ditemukan di menu clothlease atau durasi 0!")
+            end
+            -- Pasang HANYA jika belum terpasang (RentEquipped di-set akurat oleh RENTING 1)
+            if RentEquipped then
+                Log("`2[Rent]`w Item SUDAH TERPASANG. TIDAK DIKLIK (anti-copot).")
+            else
+                Log(string.format("`4[Rent]`w Item BELUM TERPASANG! Mengirim klik pasang (%s)...", btnName))
+                SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btnName .. "\n")
+                RentEquipped = true
+            end
+            BotTriggeredWrench = false
             RentChecking = false
             return true
         end
