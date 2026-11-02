@@ -2204,16 +2204,8 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             RentWarActive = false
             Log("`2[Rent]`w Konfirmasi: " .. StripColor(a))
         end
-        -- SENSOR AKURAT dari event server: mod added/removed
-        if a:find("mod added", 1, true) then
-            RentEquipped = true
-            RentLastToggle = NowTime()
-            Log("`2[Rent]`w Mod AKTIF (mod added). Status: TERPASANG.")
-        end
-        if a:find("mod removed", 1, true) then
-            RentEquipped = false
-            Log("`4[Rent]`w Mod NONAKTIF (mod removed). Status: DILEPAS.")
-        end
+        -- DIHAPUS: sensor mod added/removed tidak reliable untuk deteksi sewa
+        -- karena bisa terpicu oleh cheat/buff apapun. Deteksi hanya dari dialog clothlease.
         for _, p in ipairs(BlockConsole) do
             if a:find(p, 1, true) then return true end
         end
