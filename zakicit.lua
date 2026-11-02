@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T04:45:00 SAFE_MANUAL_WRENCH
+--  BUILD: 2026-11-03T05:00:00 FIX_LRAY_STRING
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -2021,10 +2021,12 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             -- Pilih targetFrame berdasarkan setting user
             local targetFrame = "16690"  -- default LSS
             local itemName = "Legendary Shard Sword (LSS)"
-            if target:find("LRay", 1, true) then
+            if target:find("LRay", 1, true) or target:find("Legendary Ray", 1, true) then
                 targetFrame = "16940"; itemName = "Legendary Ray (LRay)"
-            elseif target:find("MRay", 1, true) then
+            elseif target:find("MRay", 1, true) or target:find("Mythical Ray", 1, true) then
                 targetFrame = "19676"; itemName = "Mythical Ray (MRay)"
+            elseif target:find("LIF", 1, true) or target:find("Legendary Infinity Fist", 1, true) then
+                targetFrame = "19678"; itemName = "Legendary Infinity Fist (LIF)"
             end
             -- Cari baris yang punya staticframe targetFrame
             local btnName = ""   -- kosong = tidak ditemukan, jangan klik!
@@ -2401,7 +2403,7 @@ local function TabFarm()
     -- Status mini
     CText(running and C.neon_green or C.neon_red,
         running and ("  " .. Run.status) or "  Idle")
-    CText(C.text_dim, "  Build: 2026-11-03 04:45 | SAFE MANUAL WRENCH")
+    CText(C.text_dim, "  Build: 2026-11-03 05:00 | FIX LRAY TARGET")
     Sp(4)
     Sep(C.border)
 
