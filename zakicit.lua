@@ -1071,19 +1071,11 @@ local function CheckRentStatus(force)
     RentChecking = false
 end
 
--- Fungsi silent untuk langsung pasang item sewa tanpa self-wrench
+-- Fungsi untuk memastikan item sewa terpasang: lewat alur CheckRentStatus (wrench → popup → clothlease → klik)
 local function SilentEquipRent(force)
-    if RentClothBtn == "" then
-        CheckRentStatus(true)
-        return
-    end
     if not force and RentEquipped then return end -- SUDAH TERPASANG, JANGAN SENTUH!
-    local now = NowTime()
-    if not force and now - RentLastToggle < 6 then return end -- cooldown 6s anti-double-klik
-    RentLastToggle = now
-    Log("`9[Rent]`w Mengirim paket pasang item sewa: " .. RentClothBtn)
-    SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. RentClothBtn .. "\n")
-    RentEquipped = true
+    Log("`9[Rent]`w Memulai cek & pasang item sewa...")
+    CheckRentStatus(true)
 end
 
 -- Step 2: WAR Renting (Spam mesin sewa sampai dapat)
@@ -2047,14 +2039,8 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             if RentEquipped then
                 Log("`2[Rent]`w Item SUDAH TERPASANG. TIDAK DIKLIK (anti-copot).")
             else
-                local now = NowTime()
-                if now - RentLastToggle >= 6 then
-                    RentLastToggle = now
-                    Log(string.format("`4[Rent]`w Item BELUM TERPASANG! Mengirim klik pasang (%s)...", btnName))
-                    SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btnName .. "\n")
-                else
-                    Log("`3[Rent]`w Klik pasang baru saja dikirim (" .. tostring(6 - (now - RentLastToggle)) .. "s lalu), menunggu respons server...")
-                end
+                Log(string.format("`4[Rent]`w Item BELUM TERPASANG! Mengirim klik pasang (%s)...", btnName))
+                SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btnName .. "\n")
             end
             BotTriggeredWrench = false
             RentChecking = false
