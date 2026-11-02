@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T03:35:00 FORCE_PUSH_DIAGNOSTIC
+--  BUILD: 2026-11-03T03:50:00 GACOR_DELAYED_CLICK
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -2003,8 +2003,11 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             end
             RentEquipped = (isEquipped ~= nil and isEquipped ~= false)
             Log(string.format("`2[Rent]`w Status di badan (Active effects): %s", RentEquipped and "`2TERPASANG`w" or "`4BELUM`w"))
-            -- Lanjut buka menu clothlease untuk baca durasi
-            SendPacket(2, "action|dialog_return\ndialog_name|popup\nbuttonClicked|clothlease\n")
+            -- Lanjut buka menu clothlease untuk baca durasi (beri delay manusiawi agar tidak di-drop server)
+            RunThread(function()
+                Sleep(250)
+                SendPacket(2, "action|dialog_return\ndialog_name|popup\nbuttonClicked|clothlease\n")
+            end)
             return true
         end
 
@@ -2049,10 +2052,14 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             if RentEquipped then
                 Log("`2[Rent]`w Item SUDAH TERPASANG. TIDAK DIKLIK (anti-copot).")
             else
-                Log(string.format("`4[Rent]`w Item BELUM TERPASANG! Mengirim klik pasang (%s)...", btnName))
-                SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btnName .. "\n")
-                RentEquipped = true -- OPTIMISTIK: anggap terpasang setelah klik, server akan konfirmasi via mod added
-                Log("`2[Rent]`w Optimistik: RentEquipped=true. Menunggu konfirmasi server (mod added)...")
+                Log(string.format("`4[Rent]`w Item BELUM TERPASANG! Mengirim klik pasang (%s) dalam 350ms...", btnName))
+                -- Delay manusiawi agar packet tidak di-drop oleh anti-cheat server GT
+                RunThread(function()
+                    Sleep(350)
+                    SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btnName .. "\n")
+                    RentEquipped = true
+                    Log("`2[Rent]`w Packet pasang terkirim! RentEquipped=true.")
+                end)
             end
             BotTriggeredWrench = false
             RentChecking = false
@@ -2381,7 +2388,7 @@ local function TabFarm()
     -- Status mini
     CText(running and C.neon_green or C.neon_red,
         running and ("  " .. Run.status) or "  Idle")
-    CText(C.text_dim, "  Build: 2026-11-03 03:35 | Branch: main | FORCE PUSH")
+    CText(C.text_dim, "  Build: 2026-11-03 03:50 | Branch: main | GACOR DELAYED")
     Sp(4)
     Sep(C.border)
 
