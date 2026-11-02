@@ -859,10 +859,26 @@ local function BuyCheat()
     LastBuyCheat = now
     CheatNeedsRenewal = false
     Log("`9[Cheat]`w Memperpanjang / Membeli Cheats menu...")
-    -- VERIFY: format dialog_return menu cheats (hapus duplikat dialog_name|buycheat)
-    SendPacket(2, "action|dialog_return\ndialog_name|cheats\nbuttonClicked|1\n")
+
+    -- Coba beli cheat melalui menu buycheat dialog
+    -- Format VERIFY: gunakan buttonClicked|1 (Buy) pada dialog buycheat
+    SendPacket(2, "action|dialog_return\ndialog_name|buycheat\nbuttonClicked|1\n")
+    Sleep(D("RemoteDialog"))  -- tunggu server proses pembelian sebelum toggle cheat
+
+    -- Aktifkan cheat setelah delay (server butuh waktu proses)
     Cheat(true)
-    StuckGemTime = NowTime() -- [2d] Reset timer stuck setelah beli cheat
+    if S.PNB.Modfly then pcall(ChangeValue, "[C] Modfly", true) end
+    Sleep(D("CheatOn"))
+
+    StuckGemTime = NowTime() -- reset stuck timer setelah beli cheat
+
+    -- Verifikasi: jika masih di farm pos dan m sudah true, place showhand ulang agar BFG reset
+    if m and S.PosX ~= 0 and S.PosY ~= 0 then
+        local targetPlaceX = S.PNB.FaceRight and (S.PosX + 1) or (S.PosX - 1)
+        PlaceShowHand(targetPlaceX, S.PosY)
+        Sleep(D("ShortDelay"))
+        PlaceShowHand(targetPlaceX, S.PosY)
+    end
 end
 
 local LastSuckBgem = 0
@@ -1760,21 +1776,20 @@ local function Step()
             if now - StuckGemTime >= maxWait then
                 StuckCount = StuckCount + 1
                 StuckGemTime = now
-                m = false
-                Log(string.format("`4[Watchdog]`w Gems tidak naik %d menit (#%d)", tonumber(S.PNB.StuckMinutes) or 10, StuckCount))
+                m = false  -- reset farming agar Step re-setup BFG
+                Log(string.format("`4[Watchdog]`w Gems tidak naik %d menit (#%d) — auto-recovery: re-cheat & re-place...", tonumber(S.PNB.StuckMinutes) or 10, StuckCount))
+                -- Paksa beli cheat ulang dan reset posisi apapun stuck count-nya
+                CheatNeedsRenewal = true
+                Cheat(false)
+                Sleep(D("PlaceDelay"))
                 if StuckCount >= 3 then
-                    Log("`4[Watchdog]`w Gems stuck 3x! Kirim WA alert & lakukan auto-recovery (TIDAK stop PNB)...")
-                    Run.status = "Stuck Recovery"
-                    pcall(SendWhatsAppAlert, "Gems Stuck (Tidak Bertambah)", string.format("Gems tidak naik selama %d menit x 3. Bot auto-recovering: re-position & re-cheat.", tonumber(S.PNB.StuckMinutes) or 10))
-                    pcall(WebhookNotify, "stuck", "Gems tidak bertambah selama 3x periode stuck berturut-turut")
-                    Cheat(false)
-                    m = false
-                    StuckCount = 0
-                    StuckGems = Gems()
-                    StuckGemTime = NowTime()
-                    Sleep(D("PostMove"))
-                    return
+                    -- Kirim WA alert hanya saat stuck berulang kali (>= 3x)
+                    pcall(SendWhatsAppAlert, "Gems Stuck Berulang", string.format("Gems tidak naik selama %d menit x %d. Bot auto-recover re-cheat.", tonumber(S.PNB.StuckMinutes) or 10, StuckCount))
+                    pcall(WebhookNotify, "stuck", "Gems stuck " .. StuckCount .. "x berturut-turut")
+                    StuckCount = 0  -- reset agar tidak terus spam WA
                 end
+                StuckGems = Gems()
+                return
             end
         end
 
