@@ -1,2 +1,6 @@
-.vercel
-.env*
+node_modules/
+dist/
+.env
+*.log
+repo_bothax/
+web/node_modules/
