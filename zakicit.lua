@@ -1074,8 +1074,9 @@ end
 -- Fungsi silent untuk langsung pasang item sewa tanpa self-wrench (dipanggil jika clothlease sudah ada)
 local function SilentEquipRent()
     if RentClothBtn == "" then return end
+    if RentEquipped then return end -- SUDAH TERPASANG, JANGAN SENTUH (klik = copot!)
     local now = NowTime()
-    if now - RentLastToggle < 10 then return end
+    if now - RentLastToggle < 60 then return end -- cooldown 60 detik
     RentLastToggle = now
     Log("`9[Rent]`w Pasang item sewa secara silent: " .. RentClothBtn)
     SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. RentClothBtn .. "\n")
@@ -2043,30 +2044,25 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 RentExpires = NowTime() + totalSec
                 Log(string.format("`2[Rent]`w Sisa durasi sewa: %s (Status terpasang: %s)", FTime(totalSec), RentEquipped and "TERPASANG" or "BELUM"))
 
-                -- ATURAN UTAMA:
-                -- JIKA BELUM TERPASANG -> KLIK PASANG SEKALI (dengan cooldown)
-                -- JIKA SUDAH TERPASANG -> DILARANG KLIK! CUKUP UPDATE DURASI!
+                -- ATURAN MUTLAK:
+                -- JIKA SUDAH TERPASANG -> DILARANG KLIK APAPUN! Klik = COPOT!
+                -- JIKA BELUM TERPASANG -> klik SEKALI dengan cooldown 60 detik
                 local now = NowTime()
-                if not RentEquipped then
-                    if now - RentLastToggle > 15 then
-                        RentLastToggle = now
-                        Log("`9[Rent]`w Item belum dipakai! Memasang item: " .. btn)
-                        SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btn .. "\n")
-                        RentEquipped = true
-                    else
-                        Log("`3[Rent]`w Cooldown pasang aktif. Menunggu stabil.")
-                    end
+                if RentEquipped then
+                    -- Item sudah terpasang, jangan sentuh tombol!
+                    Log("`2[Rent]`w Item sudah terpasang. Update durasi selesai, tombol TIDAK diklik.")
+                elseif now - RentLastToggle > 60 then
+                    RentLastToggle = now
+                    Log("`9[Rent]`w Item belum dipakai! Pasang item: " .. btn)
+                    SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btn .. "\n")
+                    -- Optimistik: anggap terpasang, verifikasi lewat CheckRentStatus berikutnya
+                    RentEquipped = true
                 else
-                    Log("`2[Rent]`w Item sudah terpasang. Durasi berhasil di-update tanpa sentuh toggle!")
+                    Log("`3[Rent]`w Cooldown pasang aktif (" .. tostring(60 - (now - RentLastToggle)) .. "s lagi). Tidak diklik.")
                 end
             elseif btn then
                 RentClothBtn = btn
-                Log("`2[Rent]`w Item terdeteksi: " .. btn .. ". Update status.")
-                if not RentEquipped and NowTime() - RentLastToggle > 15 then
-                    RentLastToggle = NowTime()
-                    SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btn .. "\n")
-                    RentEquipped = true
-                end
+                Log("`2[Rent]`w Item terdeteksi: " .. btn .. ". Update status tanpa klik toggle.")
             else
                 -- Tidak ada item sewaan terdaftar di menu!
                 RentExpires = 0
