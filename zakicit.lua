@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T07:25:00 BUY_CHEAT_RECOVER_OK
+--  BUILD: 2026-11-03T07:35:00 SAFE_PATH_FIX
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -456,25 +456,13 @@ local function SlowFindPath(tx, ty, stepDelay)
 
     local path = FindSafePath(cx, cy, tx, ty)
     if path and #path > 0 then
-        -- [12c] Waypoint tiap 8 tile + tunggu bot mendekat
-        local i = 1
-        while i <= #path do
-            local pt = path[math.min(i + 7, #path)]
-            FindPath(pt.x, pt.y, stepDelay)
-            local deadline = os.clock() + 5
-            while os.clock() < deadline do
-                Sleep(D("ShortDelay"))
-                local cur = GetLocal()
-                if not cur then break end
-                local px = math.floor(cur.pos.x / 32)
-                local py = math.floor(cur.pos.y / 32)
-                if math.abs(px - pt.x) <= 1 and math.abs(py - pt.y) <= 1 then break end
-            end
-            i = i + 8
+        for _, pt in ipairs(path) do
+            FindPath(pt.x, pt.y)
+            Sleep(stepDelay)
         end
     else
         -- Fallback jika A* gagal
-        FindPath(tx, ty, stepDelay)
+        FindPath(tx, ty)
         Sleep(stepDelay)
     end
 end
@@ -2816,7 +2804,7 @@ AddHook("OnDraw", "ZAKICIT_DRAW", function()
         { "Text",           T.text },
     })
 
-    if ImGui.Begin("ZAKICIT PNB v2 [07:25]") then
+    if ImGui.Begin("ZAKICIT PNB v2 [07:35]") then
         if ImGui.BeginTabBar("ZakiTabs") then
             if ImGui.BeginTabItem("Farm")    then Sp(2); TabFarm();    ImGui.EndTabItem() end
             if ImGui.BeginTabItem("Mag")     then Sp(2); TabMag();     ImGui.EndTabItem() end
@@ -2845,4 +2833,4 @@ do
     end
 end
 LoadSettings()
-Log("`2ZAKICIT PNB v2 [07:25] siap. Buka menu.")
+Log("`2ZAKICIT PNB v2 [07:35] siap. Buka menu.")
