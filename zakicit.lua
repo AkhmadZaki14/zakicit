@@ -1050,46 +1050,41 @@ end
 -- ------------------------------------------------------------
 
 -- Step 1: Cek & pasang item sewa secara SILENT (tanpa popup layar mengganggu user)
--- Gunakan direct packet ke menu clothlease, bukan self-wrench yang buka popup profil!
 local function CheckRentStatus(force)
     if not S.PNB.AutoRent then return end
     local now = NowTime()
-    if not force and now - LastRentCheck < 30 then return end
+    if not force and now - LastRentCheck < 15 then return end
     LastRentCheck = now
     RentChecking = true
     BotTriggeredWrench = true
 
-    -- Kirim langsung packet buka menu clothlease (silent, tidak buka popup profil layar)
-    -- Dengan cara wrench diri sendiri LALU intercept dialog clothlease-nya di OnDialogRequest
     local me = GetLocal()
     local netId = me and me.netid or 0
+    Log("`9[Rent]`w Cek status sewa pakaian (silent)...")
     SendPacket(2, "action|wrench\n|netid|" .. tostring(math.max(1, netId)))
-    Sleep(2000) -- beri waktu server balas dialog
-
-    -- Reset flag agar user bisa buka profil sendiri bebas lagi
+    -- Tunggu hingga dialog selesai diproses di hook (maksimal 6 detik safety timeout)
+    for _ = 1, 12 do
+        if not RentChecking then break end
+        Sleep(500)
+    end
     BotTriggeredWrench = false
     RentChecking = false
 end
 
--- Fungsi silent untuk langsung pasang item sewa tanpa self-wrench (dipanggil jika clothlease sudah ada)
-local function SilentEquipRent()
-    if RentClothBtn == "" then return end
-    if RentEquipped then return end -- SUDAH TERPASANG, JANGAN SENTUH (klik = copot!)
+-- Fungsi silent untuk langsung pasang item sewa tanpa self-wrench
+local function SilentEquipRent(force)
+    if RentClothBtn == "" then
+        -- Jika belum tahu tombol cloth-nya, panggil CheckRentStatus dulu
+        CheckRentStatus(true)
+        return
+    end
+    if not force and RentEquipped then return end -- SUDAH TERPASANG, JANGAN SENTUH!
     local now = NowTime()
-    if now - RentLastToggle < 60 then return end -- cooldown 60 detik
+    if not force and now - RentLastToggle < 5 then return end -- cooldown 5 detik
     RentLastToggle = now
-    Log("`9[Rent]`w Pasang item sewa secara silent: " .. RentClothBtn)
+    Log("`9[Rent]`w Mengirim paket pasang item sewa: " .. RentClothBtn)
     SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. RentClothBtn .. "\n")
-    Sleep(1000)
-    -- Cek ulang dengan CheckRentStatus setelah pasang
-    RentChecking = true
-    BotTriggeredWrench = true
-    local me = GetLocal()
-    local netId = me and me.netid or 0
-    SendPacket(2, "action|wrench\n|netid|" .. tostring(math.max(1, netId)))
-    Sleep(2000)
-    BotTriggeredWrench = false
-    RentChecking = false
+    RentEquipped = true
 end
 
 -- Step 2: WAR Renting (Spam mesin sewa sampai dapat)
@@ -2051,14 +2046,13 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 if RentEquipped then
                     -- Item sudah terpasang, jangan sentuh tombol!
                     Log("`2[Rent]`w Item sudah terpasang. Update durasi selesai, tombol TIDAK diklik.")
-                elseif now - RentLastToggle > 60 then
+                elseif now - RentLastToggle > 5 then
                     RentLastToggle = now
                     Log("`9[Rent]`w Item belum dipakai! Pasang item: " .. btn)
                     SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btn .. "\n")
-                    -- Optimistik: anggap terpasang, verifikasi lewat CheckRentStatus berikutnya
                     RentEquipped = true
                 else
-                    Log("`3[Rent]`w Cooldown pasang aktif (" .. tostring(60 - (now - RentLastToggle)) .. "s lagi). Tidak diklik.")
+                    Log("`3[Rent]`w Cooldown pasang aktif (" .. tostring(5 - (now - RentLastToggle)) .. "s lagi).")
                 end
             elseif btn then
                 RentClothBtn = btn
@@ -2712,6 +2706,13 @@ local function TabSetting()
             RunThread(function()
                 pcall(CheckRentStatus, true)
             end)
+        end
+        if RentClothBtn ~= "" then
+            if NButton("PAKSA PASANG ITEM (" .. RentClothBtn .. ")", C.neon_yel, -1, 32) then
+                RunThread(function()
+                    pcall(SilentEquipRent, true)
+                end)
+            end
         end
         if NButton("WAR SEWA SEKARANG (Spam)", C.neon_pink, -1, 36) then
             RunThread(function()
