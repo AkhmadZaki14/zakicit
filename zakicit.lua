@@ -1070,19 +1070,51 @@ local function DoWarRent()
         Sleep(D("Join"))
     end
 
-    -- Berdiri di dekat mesin sewa
+    -- [FIX 1] Tunggu tiles world sewa ter-load sebelum pathfind
+    -- Beri waktu tile target masuk ke cache Bothax (maks 5 detik)
+    do
+        local deadline = NowTime() + 5
+        while NowTime() < deadline do
+            local t = pcall(GetTile, S.RentX, S.RentY)
+            if GetWorld() and t then break end
+            Sleep(500)
+        end
+        Sleep(300) -- buffer kecil tambahan
+    end
+
+    -- [FIX 2] Cari tile adjacent yang benar-benar bisa diinjak
+    -- Jika FindAdjacent gagal (tile belum load), coba offset sederhana
     local ax, ay = FindAdjacent(S.RentX, S.RentY)
-    if not ax then ax, ay = S.RentX, S.RentY - 1 end
-    Log(string.format("`9[Rent]`w Menuju Renting Station (%d, %d)...", S.RentX, S.RentY))
+    if not ax then
+        -- Coba offset manual kiri/kanan/bawah
+        for _, off in ipairs({ {-1,0},{1,0},{0,1},{-2,0},{2,0} }) do
+            ax, ay = S.RentX + off[1], S.RentY + off[2]
+            break
+        end
+    end
+    Log(string.format("`9[Rent]`w Menuju Renting Station (%d, %d), berdiri di (%d, %d)...", S.RentX, S.RentY, ax, ay))
     Run.status = "Moving to Rent Station"
     SlowFindPath(ax, ay, D("PathStep"))
     Sleep(D("RemoteStep"))
+
+    -- [FIX 3] Verifikasi posisi: jika masih jauh (>5 tile) coba FindPath native sekali
+    do
+        local me = GetLocal()
+        local curX = me and math.floor(me.pos.x / 32) or ax
+        local curY = me and math.floor(me.pos.y / 32) or ay
+        local dist = math.abs(curX - S.RentX) + math.abs(curY - S.RentY)
+        if dist > 5 then
+            Log(string.format("`4[Rent]`w Masih jauh dari mesin (%d tile). Paksa FindPath native...", dist))
+            FindPath(ax, ay, D("PathStep"))
+            Sleep(D("Join"))
+        end
+    end
 
     Log("`2[Rent]`w Standby di depan mesin! Memulai Wrench War...")
     Run.status = "WAR Renting..."
     RentStep = "WAIT_BUY"
 
-    -- State machine war sewa:
+    -- State machine war sewa (max 45 detik):
     local maxWarSec = 45
     local startWar = NowTime()
     local lastWrench = 0
@@ -1093,21 +1125,17 @@ local function DoWarRent()
         local now = NowTime()
 
         if RentStep == "WAIT_BUY" then
-            -- Kirim wrench setiap 1 detik sampai dialog pertama terbuka
             if now - lastWrench >= 1 or lastWrench == 0 then
                 lastWrench = now
                 WrenchTile(S.RentX, S.RentY)
             end
         elseif RentStep == "WAIT_CONFIRM" then
-            -- Dialog pertama sudah dibalas! JANGAN WRENCH LAGI!
-            -- Beri waktu server mengirim dialog rent_buyconfirm (maksimal 3 detik)
             if now - RentStepTime > 3 then
                 Log("`3[Rent]`w Menunggu konfirmasi timeout, mencoba wrench ulang...")
                 RentStep = "WAIT_BUY"
                 lastWrench = 0
             end
         elseif RentStep == "WAIT_RESULT" then
-            -- Packet beli sudah terkirim! Tunggu server mendebet WL & kirim notifikasi sukses
             if now - RentStepTime > 5 then
                 Log("`3[Rent]`w Menunggu respon pembelian timeout, mengulang sewa...")
                 RentStep = "WAIT_BUY"
@@ -1124,11 +1152,14 @@ local function DoWarRent()
     if RentSuccess then
         Log("`2[Rent]`w WAR RENTING BERHASIL! Item berhasil disewa.")
         Sleep(D("RemoteDialog"))
-        -- Otomatis cek & pasang item jika belum terpasang
         CheckRentStatus(true)
         Sleep(D("AfterRemote"))
     else
-        Log("`4[Rent]`w Timeout / Gagal sewa item pada sesi ini.")
+        -- [FIX 4] Timeout sewa: kirim WA alert, set flag agar Step tahu bot BELUM punya item
+        Log("`4[Rent]`w Timeout / Gagal sewa! Kirim alert WA...")
+        RentExpires = 0
+        RentEquipped = false
+        pcall(SendWhatsAppAlert, "Gagal Sewa Mray (Timeout)", string.format("War renting timeout 45s di world %s mesin (%d,%d). Bot kembali ke farm tapi item BELUM terpasang!", rentWorld, S.RentX, S.RentY))
     end
 
     -- Balik ke world PNB utama
@@ -1657,6 +1688,16 @@ local function Step()
                 Log("`9[BFG]`w Hadap KIRI di farm pos")
             end
             Sleep(D("FaceDelay"))
+
+            -- [GUARD ANTI-TANGAN-KOSONG] Jangan pernah BFG jika fitur sewa aktif tapi Mray belum terpasang
+            if S.PNB.AutoRent and not RentEquipped and (RentExpires == 0 or NowTime() >= RentExpires) then
+                Log("`4[RentGuard]`w Mray / alat sewa BELUM terpasang! Tahan cheat agar tidak bfg tangan kosong.")
+                Run.status = "Menunggu Sewa Mray"
+                Cheat(false)
+                m = false
+                Sleep(3000)
+                return
+            end
 
             -- Auto-place remote & showhand sebelum cheat aktif (mengunci posisi target)
             PlaceShowHand(targetPlaceX, S.PosY)
