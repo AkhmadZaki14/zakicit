@@ -1972,9 +1972,9 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             elseif target:find("LRay", 1, true) or target:find("Legendary Ray", 1, true) then
                 isEquipped = effectsPart:find("16940", 1, true) ~= nil or effectsPart:lower():find("legendary ray", 1, true) ~= nil
             elseif target:find("MRay", 1, true) or target:find("Mythical Ray", 1, true) then
-                isEquipped = effectsPart:find("19676", 1, true) ~= nil or effectsPart:lower():find("mythical ray", 1, true) ~= nil
+                isEquipped = effectsPart:find("16976", 1, true) ~= nil or effectsPart:find("19676", 1, true) ~= nil or effectsPart:lower():find("mythical ray", 1, true) ~= nil
             else -- Auto-Detect
-                isEquipped = effectsPart:find("16690", 1, true) ~= nil or effectsPart:find("16940", 1, true) ~= nil or effectsPart:find("19676", 1, true) ~= nil
+                isEquipped = effectsPart:find("16690", 1, true) ~= nil or effectsPart:find("16940", 1, true) ~= nil or effectsPart:find("16976", 1, true) ~= nil or effectsPart:find("19676", 1, true) ~= nil
             end
             RentEquipped = (isEquipped == true)
             Log(string.format("`2[Rent]`w Target: %s | Status di badan: %s", target, RentEquipped and "`2TERPASANG`w" or "`4BELUM/BUKAN TARGET`w"))
@@ -1999,14 +1999,17 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             if target:find("LRay", 1, true) or target:find("Legendary Ray", 1, true) then
                 targetFrame = "16940"; itemName = "Legendary Ray (LRay)"
             elseif target:find("MRay", 1, true) or target:find("Mythical Ray", 1, true) then
-                targetFrame = "19676"; itemName = "Mythical Ray (MRay)"
+                targetFrame = clean:find("16976", 1, true) and "16976" or "19676"
+                itemName = "Mythical Ray (MRay)"
             elseif target:find("LIF", 1, true) or target:find("Legendary Infinity Fist", 1, true) then
                 targetFrame = "19678"; itemName = "Legendary Infinity Fist (LIF)"
             elseif target:find("LSS", 1, true) or target:find("Legendary Shard Sword", 1, true) then
                 targetFrame = "16690"; itemName = "Legendary Shard Sword (LSS)"
             else
                 -- AUTO-DETECT: cari berdasarkan prioritas yang ADA di dialog clothlease
-                if clean:find("19676", 1, true) then
+                if clean:find("16976", 1, true) then
+                    targetFrame = "16976"; itemName = "Mythical Ray (MRay)"
+                elseif clean:find("19676", 1, true) then
                     targetFrame = "19676"; itemName = "Mythical Ray (MRay)"
                 elseif clean:find("16940", 1, true) then
                     targetFrame = "16940"; itemName = "Legendary Ray (LRay)"
