@@ -1078,7 +1078,9 @@ local function SilentEquipRent(force)
         return
     end
     if not force and RentEquipped then return end -- SUDAH TERPASANG, JANGAN SENTUH!
-    RentLastToggle = NowTime()
+    local now = NowTime()
+    if not force and now - RentLastToggle < 6 then return end -- cooldown 6s anti-double-klik
+    RentLastToggle = now
     Log("`9[Rent]`w Mengirim paket pasang item sewa: " .. RentClothBtn)
     SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. RentClothBtn .. "\n")
     RentEquipped = true
@@ -2041,13 +2043,18 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             else
                 Log("`4[Rent]`w Item target tidak ditemukan di menu clothlease atau durasi 0!")
             end
-            -- Pasang HANYA jika belum terpasang (RentEquipped di-set akurat oleh RENTING 1)
+            -- Pasang HANYA jika belum terpasang (RentEquipped di-set akurat oleh RENTING 1 / OnConsoleMessage)
             if RentEquipped then
                 Log("`2[Rent]`w Item SUDAH TERPASANG. TIDAK DIKLIK (anti-copot).")
             else
-                Log(string.format("`4[Rent]`w Item BELUM TERPASANG! Mengirim klik pasang (%s)...", btnName))
-                SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btnName .. "\n")
-                RentEquipped = true
+                local now = NowTime()
+                if now - RentLastToggle >= 6 then
+                    RentLastToggle = now
+                    Log(string.format("`4[Rent]`w Item BELUM TERPASANG! Mengirim klik pasang (%s)...", btnName))
+                    SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btnName .. "\n")
+                else
+                    Log("`3[Rent]`w Klik pasang baru saja dikirim (" .. tostring(6 - (now - RentLastToggle)) .. "s lalu), menunggu respons server...")
+                end
             end
             BotTriggeredWrench = false
             RentChecking = false
@@ -2197,8 +2204,32 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             RentWarActive = false
             Log("`2[Rent]`w Konfirmasi: " .. StripColor(a))
         end
-        -- DIHAPUS: sensor mod added/removed tidak reliable untuk deteksi sewa
-        -- karena bisa terpicu oleh cheat/buff apapun. Deteksi hanya dari dialog clothlease.
+        -- SENSOR PRESISI DARI NAMA MOD RESMI GROWTOPIA
+        if a:find("Legendary Shard Sword mod added", 1, true) then
+            RentEquipped = true
+            RentLastToggle = NowTime()
+            Log("`2[Rent]`w Mod LSS AKTIF (Legendary Shard Sword mod added). Status: TERPASANG [OK]")
+        elseif a:find("Legendary Shard Sword mod removed", 1, true) then
+            RentEquipped = false
+            RentLastToggle = NowTime()
+            Log("`4[Rent]`w Mod LSS COPOT (Legendary Shard Sword mod removed). Status: DILEPAS [!]")
+        elseif a:find("Legendary Powers mod added", 1, true) then
+            RentEquipped = true
+            RentLastToggle = NowTime()
+            Log("`2[Rent]`w Mod LRay AKTIF (Legendary Powers mod added). Status: TERPASANG [OK]")
+        elseif a:find("Legendary Powers mod removed", 1, true) then
+            RentEquipped = false
+            RentLastToggle = NowTime()
+            Log("`4[Rent]`w Mod LRay COPOT (Legendary Powers mod removed). Status: DILEPAS [!]")
+        elseif a:find("Mythical Ray mod added", 1, true) or a:find("Mythical Powers mod added", 1, true) then
+            RentEquipped = true
+            RentLastToggle = NowTime()
+            Log("`2[Rent]`w Mod MRay AKTIF. Status: TERPASANG [OK]")
+        elseif a:find("Mythical Ray mod removed", 1, true) or a:find("Mythical Powers mod removed", 1, true) then
+            RentEquipped = false
+            RentLastToggle = NowTime()
+            Log("`4[Rent]`w Mod MRay COPOT. Status: DILEPAS [!]")
+        end
         for _, p in ipairs(BlockConsole) do
             if a:find(p, 1, true) then return true end
         end
