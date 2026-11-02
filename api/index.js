@@ -64,6 +64,45 @@ const DEFAULT_SETTINGS = {
   fonnteHourlyReport: true,
 };
 
+// [REMOTE COMMAND & AUTH QUEUE]
+const pendingCommands = new Map(); // userId -> { cmdId, action, param, ts }
+let monitorTokenWarned = false;
+
+function checkMonitorAuth(req, res) {
+  const expectedToken = (process.env.MONITOR_TOKEN || '').trim();
+  if (!expectedToken) {
+    if (!monitorTokenWarned) {
+      monitorTokenWarned = true;
+      console.warn('[AUTH] MONITOR_TOKEN tidak di-set di environment; request heartbeat diterima tanpa autentikasi token.');
+    }
+    return true;
+  }
+  const incomingToken = req.headers['x-monitor-token'] || '';
+  if (incomingToken !== expectedToken) {
+    res.status(401).json({ ok: false, error: 'UNAUTHORIZED_TOKEN' });
+    return false;
+  }
+  return true;
+}
+
+let adminTokenWarned = false;
+function checkAdminAuth(req, res) {
+  const expectedAdmin = (process.env.ADMIN_TOKEN || '').trim();
+  if (!expectedAdmin) {
+    if (!adminTokenWarned) {
+      adminTokenWarned = true;
+      console.warn('[AUTH] ADMIN_TOKEN tidak di-set di environment; route admin dapat diakses publik.');
+    }
+    return true;
+  }
+  const incomingAdmin = req.headers['x-admin-token'] || req.headers['authorization']?.replace(/^Bearer\s+/i, '') || '';
+  if (incomingAdmin !== expectedAdmin) {
+    res.status(401).json({ ok: false, error: 'UNAUTHORIZED_ADMIN' });
+    return false;
+  }
+  return true;
+}
+
 let lastRead = 0;
 let lastPersist = 0;
 
@@ -265,10 +304,11 @@ async function loadAllMagplants() {
 async function reportMagplant({ world, x, y, itemId = 16706, itemName = null, count = null, empty = false, botName = 'unknown', ttlSec = 300 }) {
   if (!world || x == null || y == null) return null;
   world = String(world).toUpperCase().trim();
+  if (world === '' || world === '—' || world === 'NOWORLD' || world === 'EXIT') return null;
   x = Number(x); y = Number(y);
   const idNum = Number(itemId) || 16706;
   const resolvedName = itemName || KNOWN_ITEMS[idNum] || `Item #${idNum}`;
-  const key = `${world}:${x}:${y}`;
+  const key = `${world}:${x},${y}`;
   const now = Date.now();
 
   let existing = null;
@@ -835,19 +875,22 @@ async function processHeartbeat(payload) {
   if (Array.isArray(payload.magReports) && payload.magReports.length > 0) {
     for (const mr of payload.magReports) {
       if (mr && mr.x != null && mr.y != null) {
-        const isEmp = Boolean(mr.empty);
-        const parsedCount = mr.count !== null && mr.count !== undefined && !isNaN(Number(mr.count)) ? Number(mr.count) : null;
-        reportMagplant({
-          world,
-          x: mr.x,
-          y: mr.y,
-          itemId: mr.itemId || 16706,
-          itemName: mr.itemName || null,
-          count: isEmp ? 0 : parsedCount,
-          empty: isEmp,
-          ttlSec: mr.ttl || 300,
-          botName: name,
-        }).catch(err => console.error('[MAG_AUTO_INGEST_ERR]', err.message));
+        const itemWorld = String(mr.world || world || '').toUpperCase().trim();
+        if (itemWorld && itemWorld !== '—' && itemWorld !== 'NOWORLD' && itemWorld !== 'EXIT') {
+          const isEmp = Boolean(mr.empty);
+          const parsedCount = mr.count !== null && mr.count !== undefined && !isNaN(Number(mr.count)) ? Number(mr.count) : null;
+          reportMagplant({
+            world: itemWorld,
+            x: mr.x,
+            y: mr.y,
+            itemId: mr.itemId || 16706,
+            itemName: mr.itemName || null,
+            count: isEmp ? 0 : parsedCount,
+            empty: isEmp,
+            ttlSec: mr.ttl || 300,
+            botName: name,
+          }).catch(err => console.error('[MAG_AUTO_INGEST_ERR]', err.message));
+        }
       }
     }
   }
@@ -880,7 +923,50 @@ async function processHeartbeat(payload) {
     }
   } catch (_) {}
 
-  return { ok: true, status: 'processed', userId, instanceId, seq, isLegacy };
+  // [8] Siapkan daftar sharedMags untuk world bot saat ini
+  let sharedMags = [];
+  try {
+    const curW = String(world || '').toUpperCase().trim();
+    if (curW && curW !== '—' && curW !== 'EXIT' && curW !== 'NOWORLD') {
+      const allMags = await loadAllMagplants();
+      for (const item of allMags.values()) {
+        if (item && item.world === curW) {
+          const remTtl = item.emptyUntil ? Math.max(0, Math.floor((item.emptyUntil - now) / 1000)) : 0;
+          sharedMags.push({
+            world: item.world,
+            x: item.x,
+            y: item.y,
+            empty: Boolean(item.empty),
+            remTtl,
+            ttl: remTtl,
+            count: item.count,
+            itemId: item.itemId || 16706,
+          });
+        }
+      }
+    }
+  } catch (_) {}
+
+  const response = {
+    ok: true,
+    status: 'processed',
+    userId,
+    instanceId,
+    seq,
+    isLegacy,
+    sharedMags,
+  };
+
+  // [7] Ambil pending command jika ada (dan pastikan punya cmdId unik)
+  const pendingCmd = pendingCommands.get(userId);
+  if (pendingCmd) {
+    pendingCommands.delete(userId);
+    response.cmdId = pendingCmd.cmdId || `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    response.action = pendingCmd.action;
+    response.param = pendingCmd.param;
+  }
+
+  return response;
 }
 
 // =============================================================
@@ -1071,10 +1157,12 @@ function computeFleet() {
 const registerRoutes = (prefix = '') => {
   // Ingest — refresh dulu supaya upsert per userId melihat state instance lain
   app.post(`${prefix}/heartbeat`, async (req, res) => {
+    if (!checkMonitorAuth(req, res)) return;
     await refreshState(true);
     res.json(await processHeartbeat(req.body));
   });
   app.post(`${prefix}/update`, async (req, res) => {
+    if (!checkMonitorAuth(req, res)) return;
     await refreshState(true);
     res.json({ status: 'ok', ...(await processHeartbeat(req.body)) });
   });
@@ -1173,6 +1261,7 @@ const registerRoutes = (prefix = '') => {
 
   // Hapus worker + seluruh history/event-nya (tidak bisa dibatalkan)
   app.delete(`${prefix}/workers/:userId`, async (req, res) => {
+    if (!checkAdminAuth(req, res)) return;
     await refreshState(true);
     const uid = String(req.params.userId);
     const existed = workers.delete(uid);
@@ -1188,6 +1277,7 @@ const registerRoutes = (prefix = '') => {
 
   // Hapus semua worker yang OFFLINE lebih lama dari N menit (default 60)
   app.delete(`${prefix}/workers`, async (req, res) => {
+    if (!checkAdminAuth(req, res)) return;
     await refreshState(true);
     const olderThanMin = Number(req.query.olderThanMinutes || 60);
     const cut = Date.now() - olderThanMin * 60000;
@@ -1300,7 +1390,8 @@ const registerRoutes = (prefix = '') => {
     }
   });
 
-  app.post(`${prefix}/magplant/clear`, async (_, res) => {
+  app.post(`${prefix}/magplant/clear`, async (req, res) => {
+    if (!checkAdminAuth(req, res)) return;
     try {
       const r = await clearAllMagplants();
       res.json(r);
@@ -1359,6 +1450,7 @@ const registerRoutes = (prefix = '') => {
     res.json({ settings });
   });
   app.put(`${prefix}/settings`, async (req, res) => {
+    if (!checkAdminAuth(req, res)) return;
     const allowed = Object.keys(DEFAULT_SETTINGS);
     for (const key of allowed) {
       if (req.body[key] === undefined) continue;
@@ -1380,6 +1472,23 @@ const registerRoutes = (prefix = '') => {
   app.get(`${prefix}/events`, async (req, res) => {
     await refreshState();
     res.json({ events: events.slice(0, 100), total: events.length });
+  });
+
+  // [7] Remote Command Queue Dispatcher
+  app.post(`${prefix}/command`, (req, res) => {
+    if (!checkAdminAuth(req, res)) return;
+    const { userId, action, param } = req.body || {};
+    if (!userId || !action) {
+      return res.status(400).json({ ok: false, error: 'MISSING_USER_ID_OR_ACTION' });
+    }
+    const cmdId = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    pendingCommands.set(String(userId), {
+      cmdId,
+      action: String(action),
+      param: param ? String(param) : '',
+      ts: Date.now(),
+    });
+    res.json({ ok: true, status: 'queued', userId: String(userId), cmdId, action, param });
   });
 };
 
