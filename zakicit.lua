@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T07:10:00 RAY_PLUS_2POS_OK
+--  BUILD: 2026-11-03T07:25:00 BUY_CHEAT_RECOVER_OK
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -844,30 +844,13 @@ local function BuyCheat()
     if not S.PNB.AutoBuyCheats then return end
     local now = NowTime()
     local delaySec = (tonumber(S.DelayBuyCheat) or 30) * 60
-    if not CheatNeedsRenewal and LastBuyCheat > 0 and now - LastBuyCheat < delaySec then return end
+    if LastBuyCheat > 0 and now - LastBuyCheat < delaySec then return end
     LastBuyCheat = now
-    CheatNeedsRenewal = false
     Log("`9[Cheat]`w Memperpanjang / Membeli Cheats menu...")
-
-    -- Coba beli cheat melalui menu buycheat dialog
-    -- Format VERIFY: gunakan buttonClicked|1 (Buy) pada dialog buycheat
-    SendPacket(2, "action|dialog_return\ndialog_name|buycheat\nbuttonClicked|1\n")
-    Sleep(D("RemoteDialog"))  -- tunggu server proses pembelian sebelum toggle cheat
-
-    -- Aktifkan cheat setelah delay (server butuh waktu proses)
-    Cheat(true)
-    if S.PNB.Modfly then pcall(ChangeValue, "[C] Modfly", true) end
-    Sleep(D("CheatOn"))
-
-    StuckGemTime = NowTime() -- reset stuck timer setelah beli cheat
-
-    -- Verifikasi: jika masih di farm pos dan m sudah true, place showhand ulang agar BFG reset
-    if m and S.PosX ~= 0 and S.PosY ~= 0 then
-        local targetPlaceX = S.PNB.FaceRight and (S.PosX + 1) or (S.PosX - 1)
-        PlaceShowHand(targetPlaceX, S.PosY)
-        Sleep(D("ShortDelay"))
-        PlaceShowHand(targetPlaceX, S.PosY)
-    end
+    SendPacket(2, "action|dialog_return\ndialog_name|buycheat\ndialog_name|cheats\nbuttonClicked|1\n")
+    -- Auto-recover: paksa Step() panggil Cheat(true) lagi dan re-place showhand
+    m = false
+    changeRemote = false
 end
 
 local LastSuckBgem = 0
@@ -1778,7 +1761,9 @@ local function Step()
                 m = false  -- reset farming agar Step re-setup BFG
                 Log(string.format("`4[Watchdog]`w Gems tidak naik %d menit (#%d) — auto-recovery: re-cheat & re-place...", tonumber(S.PNB.StuckMinutes) or 10, StuckCount))
                 -- Paksa beli cheat ulang dan reset posisi apapun stuck count-nya
-                CheatNeedsRenewal = true
+                LastBuyCheat = 0
+                m = false
+                changeRemote = false
                 Cheat(false)
                 Sleep(D("PlaceDelay"))
                 if StuckCount >= 3 then
@@ -1819,7 +1804,7 @@ function StartPNB()
     m = false
     RecalcMag()
     Run.startTime = NowTime()
-    LastBuyCheat = NowTime() -- [3] Inisialisasi agar tidak langsung jalan di Step pertama
+    LastBuyCheat = 0 -- [3] Inisialisasi 0 agar langsung membeli/memastikan cheat saat StartPNB
     ConsumeTime  = NowTime() -- [3] Inisialisasi agar tidak langsung jalan di Step pertama
     CheatNeedsRenewal = false
     StuckGems = Gems()
@@ -2197,10 +2182,13 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 blockSB = true
             end
         end
-        -- [3] Deteksi cheat expired dari pesan server
-        if a:find("Cheat deactivated", 1, true) or a:find("cheats have ended", 1, true) then
+        -- [3] Deteksi cheat expired dari pesan server (semua varian text GT)
+        if a:find("boringness", 1, true) or a:find("worn off", 1, true)
+            or a:find("expired", 1, true) or a:find("Cheat deactivated", 1, true)
+            or a:find("cheats have ended", 1, true) then
             CheatNeedsRenewal = true
-            Log("`3[Cheat]`w Cheat expired terdeteksi! Akan diperbarui di BuyCheat()...")
+            LastBuyCheat = 0 -- reset timer agar BuyCheat() langsung jalan di Step berikutnya
+            Log("`3[Cheat]`w Cheat MATI terdeteksi! Re-buy segera...")
         end
         -- Deteksi sukses sewa dari console message
         if a:find("rented 1", 1, true) and a:find("for 1 day", 1, true) then
@@ -2828,7 +2816,7 @@ AddHook("OnDraw", "ZAKICIT_DRAW", function()
         { "Text",           T.text },
     })
 
-    if ImGui.Begin("ZAKICIT PNB v2 [07:10]") then
+    if ImGui.Begin("ZAKICIT PNB v2 [07:25]") then
         if ImGui.BeginTabBar("ZakiTabs") then
             if ImGui.BeginTabItem("Farm")    then Sp(2); TabFarm();    ImGui.EndTabItem() end
             if ImGui.BeginTabItem("Mag")     then Sp(2); TabMag();     ImGui.EndTabItem() end
@@ -2857,4 +2845,4 @@ do
     end
 end
 LoadSettings()
-Log("`2ZAKICIT PNB v2 [07:10] siap. Buka menu.")
+Log("`2ZAKICIT PNB v2 [07:25] siap. Buka menu.")
