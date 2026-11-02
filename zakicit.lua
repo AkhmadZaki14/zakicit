@@ -1958,10 +1958,10 @@ AddHook("OnVariant", "PNB_VAR", function(var)
         end
 
         -- RENTING 1: Intercept Self-Wrench Popup -> deteksi RentEquipped dari Active effects: lalu buka clothlease
-        -- Tombol clothlease HANYA ada di popup profil diri sendiri jika punya sewaan aktif.
-        -- Kita TIDAK batasi dengan BotTriggeredWrench agar tidak gagal akibat timing thread.
+        -- GUARD: HANYA aktif jika bot PNB RUNNING atau sedang proses RentChecking / RentWarActive!
+        -- Jika bot OFF dan user wrench manual, jangan dicegat agar dialog profil asli tetap bisa dibuka.
         local isSelfPopupWithRent = (a:find("end_dialog|popup", 1, true) or a:find("add_player_info", 1, true)) and a:find("clothlease", 1, true)
-        if isSelfPopupWithRent then
+        if isSelfPopupWithRent and (Run.start or RentChecking or RentWarActive) then
             local clean = StripColor(a)
             local target = S.PNB.RentTargetItem or "Auto-Detect"
             -- Ambil bagian Active effects: saja
@@ -1988,7 +1988,7 @@ AddHook("OnVariant", "PNB_VAR", function(var)
 
         -- RENTING 2: Intercept Menu Rented Clothing (clothlease) -> parse durasi + pasang jika perlu
         -- Format: add_button_with_icon|cloth_-258|`223h 58m 35s``|staticframe|16690||
-        if a:find("clothlease", 1, true) and (a:find("Rented Clothing", 1, true) or a:find("staticframe", 1, true)) then
+        if (Run.start or RentChecking or RentWarActive) and a:find("clothlease", 1, true) and (a:find("Rented Clothing", 1, true) or a:find("staticframe", 1, true)) then
             local clean = StripColor(a)
             local target = S.PNB.RentTargetItem or "Auto-Detect"
             Log(string.format("`3[Rent]`w clothlease: TargetItem terbaca='%s'", tostring(target)))
