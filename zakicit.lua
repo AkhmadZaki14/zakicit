@@ -2321,7 +2321,9 @@ local function PushCols(list)
 end
 
 local function PopCols(n)
-    if n > 0 then pcall(ImGui.PopStyleColor, n) end
+    if n > 0 then
+        for _ = 1, n do pcall(ImGui.PopStyleColor) end
+    end
 end
 
 local function PushVars()
@@ -2344,7 +2346,9 @@ local function PushVars()
 end
 
 local function PopVars(n)
-    if n > 0 then pcall(ImGui.PopStyleVar, n) end
+    if n > 0 then
+        for _ = 1, n do pcall(ImGui.PopStyleVar) end
+    end
 end
 
 local function Sp(h) ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (h or 4)) end
@@ -2356,14 +2360,18 @@ local function Sep()
 end
 
 local function Btn(label, col, w, h)
-    col = col or T.btn
-    local n = PushCols({
-        { "Button",        Dim(col, 0.85) },
-        { "ButtonHovered", col },
-        { "ButtonActive",  Dim(col, 1.2) },
-    })
+    -- Warna tombol sudah di-set dari PushCols global di OnDraw.
+    -- Hanya push ekstra jika col beda dari default T.btn.
+    local n = 0
+    if col and col ~= T.btn then
+        n = PushCols({
+            { "Button",        Dim(col, 0.85) },
+            { "ButtonHovered", col },
+            { "ButtonActive",  Dim(col, 1.2) },
+        })
+    end
     local r = ImGui.Button(label, ImVec2(w or -1, h or 34))
-    PopCols(n)
+    if n > 0 then PopCols(n) end
     return r
 end
 
@@ -2401,9 +2409,7 @@ local cardStack = {}
 local function Card(id, h, title)
     local ok = false
     if ImGui.BeginChild then
-        local n = PushCols({ { "ChildBg", T.card }, { "Border", T.line } })
         ok = pcall(ImGui.BeginChild, id, ImVec2(-1, h), true)
-        PopCols(n)
     end
     cardStack[#cardStack+1] = ok
     if ok and title then CText(T.accent, title); Sp(2) end
@@ -2816,6 +2822,7 @@ AddHook("OnDraw", "ZAKICIT_DRAW", function()
     local nv = PushVars()
     local nc = PushCols({
         { "WindowBg",       { 0.07, 0.07, 0.10, 0.98 } },
+        { "ChildBg",        T.card },
         { "TitleBg",        { 0.07, 0.07, 0.10, 1 } },
         { "TitleBgActive",  { 0.10, 0.11, 0.18, 1 } },
         { "FrameBg",        T.field },
