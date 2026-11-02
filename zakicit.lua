@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T50:50:00 ANTI_FC_STABLE
+--  BUILD: 2026-11-03T06:30:00 FINAL_V3_STABLE
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -2821,7 +2821,7 @@ AddHook("OnDraw", "ZAKICIT_DRAW", function()
         { "Text",           T.text },
     })
 
-    if ImGui.Begin("ZAKICIT PNB v2") then
+    if ImGui.Begin("ZAKICIT PNB v2 [06:30]") then
         if ImGui.BeginTabBar("ZakiTabs") then
             if ImGui.BeginTabItem("Farm")    then Sp(2); TabFarm();    ImGui.EndTabItem() end
             if ImGui.BeginTabItem("Mag")     then Sp(2); TabMag();     ImGui.EndTabItem() end
@@ -2850,4 +2850,4 @@ do
     end
 end
 LoadSettings()
-Log("`2ZAKICIT PNB v2 siap. Buka menu.")
+Log("`2ZAKICIT PNB v2 [06:30] siap. Buka menu.")
