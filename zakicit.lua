@@ -1986,38 +1986,9 @@ AddHook("OnVariant", "PNB_VAR", function(var)
         -- RENTING 1: Intercept Self-Wrench Popup -> HANYA JIKA bot yang memicu (BotTriggeredWrench == true)
         -- Jika USER MANUAL yang klik wrench badannya sendiri, BIARKAN POPUP TERBUKA BEBAS tanpa diganggu script!
         if BotTriggeredWrench and a:find("clothlease", 1, true) and (a:find("dialog_name|popup", 1, true) or a:find("Active effects:", 1, true) or a:find("Cloth Renting", 1, true)) then
-            -- DEBUG: Log raw popup untuk diagnosis
-            local shortPopup = StripColor(a):sub(1, 300)
-            Log("`3[Rent:PopupRAW]`w " .. shortPopup)
-            -- Sensor dinamis: cek apakah item sewaan ada di Active Effects
-            local activeEff = a:match("Active effects:(.-)You have") or a:match("Active effects:(.-)%|") or a:match("Active effects:(.*)") or ""
-            local effLow = activeEff:lower()
-
-            -- Keywords umum semua item sewaan (mray, lray, lss, lif)
-            local autoMatch = effLow:find("shard") or effLow:find("sword") or
-                              effLow:find("ray") or effLow:find("fist") or
-                              effLow:find("mray") or effLow:find("lray") or
-                              effLow:find("lss") or effLow:find("lease") or
-                              effLow:find("rented") or effLow:find("16690") or
-                              effLow:find("16858") or effLow:find("15444") or
-                              effLow:find("15694") or effLow:find("15730")
-
-            -- Jika user memilih item spesifik, cek nama itu duluan
-            local target = S.PNB.RentTargetItem or "Auto-Detect"
-            local nameMatch = false
-            if target ~= "Auto-Detect" then
-                nameMatch = effLow:find(target:lower(), 1, true)
-            end
-
-            -- Jika RentItemId sudah terisi dari dialog clothlease, cek juga
-            local idMatch = RentItemId ~= "" and activeEff:find(RentItemId, 1, true)
-
-            if idMatch or nameMatch or (target == "Auto-Detect" and autoMatch) then
-                RentEquipped = true
-            else
-                RentEquipped = false
-            end
-            Log(string.format("`9[Rent]`w Status di badan: %s (target: %s). Membuka Cloth Renting...", RentEquipped and "TERPASANG [OK]" or "BELUM [!]", target))
+            -- Popup profil: langsung buka menu clothlease, JANGAN coba deteksi dari Active effects
+            -- Sumber kebenaran status terpasang hanya dari dialog clothlease itu sendiri
+            Log("`9[Rent]`w Membuka Cloth Renting dari popup...")
             SendPacket(2, "action|dialog_return\ndialog_name|popup\nbuttonClicked|clothlease\n")
             return true
         end
@@ -2028,10 +1999,30 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             -- DEBUG: Log raw dialog untuk diagnosis
             local shortRaw = clean:sub(1, 300)
             Log("`3[Rent:RAW]`w " .. shortRaw)
-            -- Cari tombol cloth_ (misal cloth_-258) dan icon item ID (misal 16690)
+            -- Cari tombol cloth_ (misal cloth_-258) dan icon item ID (misal 16690 / 16940 / 19676)
             local btn = clean:match("(cloth_%-?%d+)")
-            local rawId = clean:match("cloth_%-?%d+|.-|staticframe|(%d+)")
+            local rawId = clean:match("cloth_%-?%d+|.-|staticframe|(%d+)") or clean:match("staticframe|(%d+)")
             if rawId then RentItemId = rawId end
+
+            -- Mapping staticframe ID:
+            -- LSS  = 16690
+            -- LRay = 16940
+            -- MRay = 19676
+            local idName = "Unknown"
+            if rawId == "16690" then idName = "Legendary Shard Sword (LSS)"
+            elseif rawId == "16940" then idName = "Legendary Ray (LRay)"
+            elseif rawId == "19676" then idName = "Mythical Ray (MRay)"
+            end
+
+            -- Cek status fisik terpasang langsung dari teks dialog clothlease:
+            local cleanLow = clean:lower()
+            if cleanLow:find("unequip", 1, true) or cleanLow:find("take off", 1, true) then
+                RentEquipped = true
+                Log(string.format("`2[Rent]`w Deteksi Dialog: Item %s SEDANG TERPASANG di badan [OK]", idName))
+            elseif cleanLow:find("equip", 1, true) or cleanLow:find("wear", 1, true) then
+                RentEquipped = false
+                Log(string.format("`4[Rent]`w Deteksi Dialog: Item %s BELUM TERPASANG di badan [!]", idName))
+            end
 
             -- Parse durasi lengkap: hari (d), jam (h), menit (m), detik (s)
             local days = tonumber(clean:match("(%d+)d")) or 0
@@ -2043,20 +2034,17 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             if btn and totalSec > 0 then
                 RentClothBtn = btn
                 RentExpires = NowTime() + totalSec
-                Log(string.format("`2[Rent]`w Sisa durasi sewa: %s (Status terpasang: %s)", FTime(totalSec), RentEquipped and "TERPASANG" or "BELUM"))
+                Log(string.format("`2[Rent]`w Sisa durasi %s: %s (Status: %s)", idName, FTime(totalSec), RentEquipped and "TERPASANG" or "BELUM"))
 
-                -- ATURAN MUTLAK:
-                -- JIKA SUDAH TERPASANG -> DILARANG KLIK APAPUN! Klik = COPOT!
-                -- JIKA BELUM TERPASANG -> klik SEKALI dengan cooldown 60 detik
                 local now = NowTime()
                 if RentEquipped then
-                    -- Item sudah terpasang, jangan sentuh tombol!
-                    Log("`2[Rent]`w Item sudah terpasang. Update durasi selesai, tombol TIDAK diklik.")
+                    -- Item sudah terpasang, DILARANG KLIK!
+                    Log("`2[Rent]`w Item sudah terpasang di badan. Tombol TIDAK diklik agar tidak copot!")
                 elseif now - RentLastToggle > 5 then
                     RentLastToggle = now
-                    Log("`9[Rent]`w Item belum dipakai! Pasang item: " .. btn)
+                    Log(string.format("`9[Rent]`w Memasang item %s (tombol: %s)...", idName, btn))
                     SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btn .. "\n")
-                    RentEquipped = true
+                    RentEquipped = true -- optimistik setelah pasang
                 else
                     Log("`3[Rent]`w Cooldown pasang aktif (" .. tostring(5 - (now - RentLastToggle)) .. "s lagi).")
                 end
