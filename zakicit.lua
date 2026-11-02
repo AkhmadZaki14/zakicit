@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T05:00:00 FIX_LRAY_STRING
+--  BUILD: 2026-11-03T05:15:00 LRAY_AUTODETECT_FIX
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -2018,15 +2018,33 @@ AddHook("OnVariant", "PNB_VAR", function(var)
         if a:find("clothlease", 1, true) and (a:find("Rented Clothing", 1, true) or a:find("staticframe", 1, true)) then
             local clean = StripColor(a)
             local target = S.PNB.RentTargetItem or "Auto-Detect"
-            -- Pilih targetFrame berdasarkan setting user
-            local targetFrame = "16690"  -- default LSS
-            local itemName = "Legendary Shard Sword (LSS)"
+            Log(string.format("`3[Rent]`w clothlease: TargetItem terbaca='%s'", tostring(target)))
+            -- Tentukan targetFrame: jika spesifik pilih itu, jika Auto-Detect cari yang ada di dialog
+            local targetFrame = nil
+            local itemName = "Unknown"
+
             if target:find("LRay", 1, true) or target:find("Legendary Ray", 1, true) then
                 targetFrame = "16940"; itemName = "Legendary Ray (LRay)"
             elseif target:find("MRay", 1, true) or target:find("Mythical Ray", 1, true) then
                 targetFrame = "19676"; itemName = "Mythical Ray (MRay)"
             elseif target:find("LIF", 1, true) or target:find("Legendary Infinity Fist", 1, true) then
                 targetFrame = "19678"; itemName = "Legendary Infinity Fist (LIF)"
+            elseif target:find("LSS", 1, true) or target:find("Legendary Shard Sword", 1, true) then
+                targetFrame = "16690"; itemName = "Legendary Shard Sword (LSS)"
+            else
+                -- AUTO-DETECT: cari berdasarkan prioritas yang ADA di dialog clothlease
+                if clean:find("19676", 1, true) then
+                    targetFrame = "19676"; itemName = "Mythical Ray (MRay)"
+                elseif clean:find("16940", 1, true) then
+                    targetFrame = "16940"; itemName = "Legendary Ray (LRay)"
+                elseif clean:find("19678", 1, true) then
+                    targetFrame = "19678"; itemName = "Legendary Infinity Fist (LIF)"
+                elseif clean:find("16690", 1, true) then
+                    targetFrame = "16690"; itemName = "Legendary Shard Sword (LSS)"
+                else
+                    targetFrame = "16690"; itemName = "Default (16690)"
+                end
+                Log(string.format("`2[Rent]`w Auto-Detect memilih: %s (frame=%s)", itemName, targetFrame))
             end
             -- Cari baris yang punya staticframe targetFrame
             local btnName = ""   -- kosong = tidak ditemukan, jangan klik!
@@ -2403,7 +2421,7 @@ local function TabFarm()
     -- Status mini
     CText(running and C.neon_green or C.neon_red,
         running and ("  " .. Run.status) or "  Idle")
-    CText(C.text_dim, "  Build: 2026-11-03 05:00 | FIX LRAY TARGET")
+    CText(C.text_dim, "  Build: 2026-11-03 05:15 | LRAY+AUTODETECT FIX")
     Sp(4)
     Sep(C.border)
 
