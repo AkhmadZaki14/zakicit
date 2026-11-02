@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T06:30:00 FINAL_V3_STABLE
+--  BUILD: 2026-11-03T07:10:00 RAY_PLUS_2POS_OK
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -106,6 +106,7 @@ local CheatNeedsRenewal = false -- [3] Flag jika cheat expired terdeteksi dari c
 local PaywallExpires   = 0  -- kapan akses paywall habis
 local CapturePaywall   = false  -- flag: punch berikutnya set PaywallX/Y
 local CaptureTel       = false  -- [11] flag: punch berikutnya set TelX/Y
+local CaptureFarmPos   = false  -- flag: punch berikutnya set PosX/Y farm
 local LastPaywallCheck = 0  -- kapan terakhir wrench untuk cek/renew
 
 -- [7b, 9, 11, 14, 16] State Baru
@@ -1099,66 +1100,45 @@ local function DoWarRent()
         Sleep(300) -- buffer kecil tambahan
     end
 
-    -- [POSISI BERDIRI TEPAT]
-    -- Gunakan koordinat berdiri yang diset user, atau default ke mesin sewa
-    local targetStandX = (S.RentStandX and S.RentStandX ~= 0) and S.RentStandX or S.RentX
-    local targetStandY = (S.RentStandY and S.RentStandY ~= 0) and S.RentStandY or S.RentY
-
-    Log(string.format("`9[Rent]`w Menuju posisi sewa (%d, %d)...", targetStandX, targetStandY))
+    -- [POSISI MESIN SEWA TUNGGAL]
+    -- Bot cukup menuju ke samping/depan tile mesin sewa (S.RentX, S.RentY)
+    Log(string.format("`9[Rent]`w Menuju mesin sewa (%d, %d)...", S.RentX, S.RentY))
     Run.status = "Moving to Rent Station"
-    SlowFindPath(targetStandX, targetStandY, D("PathStep"))
+    SlowFindPath(S.RentX, S.RentY, D("PathStep"))
     Sleep(D("RemoteStep"))
 
-    -- Verifikasi posisi harus pas persis di koordinat target
-    do
-        local me = GetLocal()
-        local curX = me and math.floor(me.pos.x / 32) or targetStandX
-        local curY = me and math.floor(me.pos.y / 32) or targetStandY
-        if curX ~= targetStandX or curY ~= targetStandY then
-            Log(string.format("`3[Rent]`w Posisi belum pas (%d, %d) vs target (%d, %d). Reposisi paksa...", curX, curY, targetStandX, targetStandY))
-            FindPath(targetStandX, targetStandY, D("PathStep"))
-            Sleep(D("RemoteStep"))
-        end
-    end
-
-    Log("`2[Rent]`w Standby persis di depan mesin! Memulai Wrench War...")
+    Log("`2[Rent]`w Standby di mesin! Memulai Wrench War...")
     Run.status = "WAR Renting..."
     RentStep = "WAIT_BUY"
 
-    -- State machine war sewa: durasi dinaikkan jadi 120 detik agar tidak keburu timeout
+    -- State machine war sewa: durasi 120 detik, spam wrench tiap 350-400ms
     local maxWarSec = 120
     local startWar = NowTime()
-    local lastWrench = 0
+    local lastWrenchTick = 0
 
     while RentWarActive and (NowTime() - startWar < maxWarSec) do
         if RentSuccess then break end
 
         local now = NowTime()
-
-        -- Pastikan bot tidak tergeser saat war
-        local me = GetLocal()
-        local curX = me and math.floor(me.pos.x / 32) or targetStandX
-        local curY = me and math.floor(me.pos.y / 32) or targetStandY
-        if curX ~= targetStandX or curY ~= targetStandY then
-            FindPath(targetStandX, targetStandY, D("PathStep"))
-        end
+        local curClock = os.clock()
 
         if RentStep == "WAIT_BUY" then
-            if now - lastWrench >= 1 or lastWrench == 0 then
-                lastWrench = now
+            -- Spam wrench cepat setiap 350ms (0.35 detik)
+            if curClock - lastWrenchTick >= 0.35 or lastWrenchTick == 0 then
+                lastWrenchTick = curClock
                 WrenchTile(S.RentX, S.RentY)
             end
         elseif RentStep == "WAIT_CONFIRM" then
             if now - RentStepTime > 3 then
-                Log("`3[Rent]`w Menunggu konfirmasi timeout, mencoba wrench ulang...")
+                Log("`3[Rent]`w Menunggu konfirmasi timeout, wrench ulang...")
                 RentStep = "WAIT_BUY"
-                lastWrench = 0
+                lastWrenchTick = 0
             end
         elseif RentStep == "WAIT_RESULT" then
             if now - RentStepTime > 5 then
-                Log("`3[Rent]`w Menunggu respon pembelian timeout, mengulang sewa...")
+                Log("`3[Rent]`w Menunggu respon pembelian timeout, ulang sewa...")
                 RentStep = "WAIT_BUY"
-                lastWrench = 0
+                lastWrenchTick = 0
             end
         end
 
@@ -1931,6 +1911,12 @@ AddHook("OnSendPacketRaw", "PNB_RAW", function(pkt)
             Log("Telephone Pos : " .. pkt.px .. ", " .. pkt.py)
             CaptureTel = false
             return true
+        elseif CaptureFarmPos then
+            S.PosX = pkt.px
+            S.PosY = pkt.py
+            Log("Farm Pos (Punch) : " .. pkt.px .. ", " .. pkt.py)
+            CaptureFarmPos = false
+            return true
         end
     end
     return false
@@ -1973,8 +1959,10 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 isEquipped = effectsPart:find("16940", 1, true) ~= nil or effectsPart:lower():find("legendary ray", 1, true) ~= nil
             elseif target:find("MRay", 1, true) or target:find("Mythical Ray", 1, true) then
                 isEquipped = effectsPart:find("16976", 1, true) ~= nil or effectsPart:find("19676", 1, true) ~= nil or effectsPart:lower():find("mythical ray", 1, true) ~= nil
+            elseif target:find("Ray", 1, true) or target:find("Rayman", 1, true) then
+                isEquipped = effectsPart:find("5480", 1, true) ~= nil or effectsPart:lower():find("rayman", 1, true) ~= nil
             else -- Auto-Detect
-                isEquipped = effectsPart:find("16690", 1, true) ~= nil or effectsPart:find("16940", 1, true) ~= nil or effectsPart:find("16976", 1, true) ~= nil or effectsPart:find("19676", 1, true) ~= nil
+                isEquipped = effectsPart:find("16690", 1, true) ~= nil or effectsPart:find("16940", 1, true) ~= nil or effectsPart:find("16976", 1, true) ~= nil or effectsPart:find("19676", 1, true) ~= nil or effectsPart:find("5480", 1, true) ~= nil
             end
             RentEquipped = (isEquipped == true)
             Log(string.format("`2[Rent]`w Target: %s | Status di badan: %s", target, RentEquipped and "`2TERPASANG`w" or "`4BELUM/BUKAN TARGET`w"))
@@ -2005,6 +1993,8 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 targetFrame = "19678"; itemName = "Legendary Infinity Fist (LIF)"
             elseif target:find("LSS", 1, true) or target:find("Legendary Shard Sword", 1, true) then
                 targetFrame = "16690"; itemName = "Legendary Shard Sword (LSS)"
+            elseif target:find("Ray", 1, true) or target:find("Rayman", 1, true) then
+                targetFrame = "5480"; itemName = "Rayman's Fist (Ray)"
             else
                 -- AUTO-DETECT: cari berdasarkan prioritas yang ADA di dialog clothlease
                 if clean:find("16976", 1, true) then
@@ -2017,6 +2007,8 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                     targetFrame = "19678"; itemName = "Legendary Infinity Fist (LIF)"
                 elseif clean:find("16690", 1, true) then
                     targetFrame = "16690"; itemName = "Legendary Shard Sword (LSS)"
+                elseif clean:find("5480", 1, true) then
+                    targetFrame = "5480"; itemName = "Rayman's Fist (Ray)"
                 else
                     targetFrame = "16690"; itemName = "Default (16690)"
                 end
@@ -2075,10 +2067,13 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             local ry = a:match("embed_data|y|(%d+)") or S.RentY
             if wtb then
                 RentWtb = wtb
-                Log(string.format("`2[Rent]`w Konfirmasi WTB terdeteksi (%s)! Mengirim packet pembelian...", wtb))
-                SendPacket(2, string.format("action|dialog_return\ndialog_name|rent_buyconfirm\nwtb|%s|\nx|%d|\ny|%d|\n", wtb, tonumber(rx), tonumber(ry)))
-                RentStep = "WAIT_RESULT"
-                RentStepTime = NowTime()
+                Log(string.format("`2[Rent]`w Konfirmasi WTB (%s) mesin (%s,%s)! Mengirim packet beli...", wtb, tostring(rx), tostring(ry)))
+                RunThread(function()
+                    Sleep(200)
+                    SendPacket(2, string.format("action|dialog_return\ndialog_name|rent_buyconfirm\nwtb|%s|\nx|%d|\ny|%d|\n", wtb, tonumber(rx), tonumber(ry)))
+                    RentStep = "WAIT_RESULT"
+                    RentStepTime = NowTime()
+                end)
             end
             return true
         end
@@ -2087,11 +2082,13 @@ AddHook("OnVariant", "PNB_VAR", function(var)
         if RentWarActive and (a:find("rent_buy", 1, true) or a:find("Renting Station", 1, true)) then
             local rx = a:match("embed_data|x|(%d+)") or S.RentX
             local ry = a:match("embed_data|y|(%d+)") or S.RentY
-            Log(string.format("`2[Rent]`w Dialog mesin sewa terbuka! Mengirim konfirmasi sewa (%d, %d)...", tonumber(rx), tonumber(ry)))
-            SendPacket(2, string.format("action|dialog_return\ndialog_name|rent_buy\nx|%d|\ny|%d|\n", tonumber(rx), tonumber(ry)))
-            -- Pindah ke state menunggu konfirmasi, BERHENTI WRENCH sampai dialog_2 datang
-            RentStep = "WAIT_CONFIRM"
-            RentStepTime = NowTime()
+            Log(string.format("`2[Rent]`w Dialog mesin terbuka (%s,%s)! Mengirim tombol sewa...", tostring(rx), tostring(ry)))
+            RunThread(function()
+                Sleep(200)
+                SendPacket(2, string.format("action|dialog_return\ndialog_name|rent_buy\nx|%d|\ny|%d|\n", tonumber(rx), tonumber(ry)))
+                RentStep = "WAIT_CONFIRM"
+                RentStepTime = NowTime()
+            end)
             return true
         end
 
@@ -2217,6 +2214,7 @@ AddHook("OnVariant", "PNB_VAR", function(var)
         local isLSS  = a:find("Legendary Shard Sword mod", 1, true)
         local isLRay = a:find("Legendary Powers mod", 1, true)
         local isMRay = a:find("Mythical Ray mod", 1, true) or a:find("Mythical Powers mod", 1, true)
+        local isRay  = a:find("Rayman", 1, true)
         local isAdded   = a:find("mod added", 1, true)
         local isRemoved = a:find("mod removed", 1, true)
 
@@ -2227,8 +2225,10 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             targetMatch = isLRay ~= nil
         elseif rentTarget:find("MRay", 1, true) or rentTarget:find("Mythical Ray", 1, true) then
             targetMatch = isMRay ~= nil
+        elseif rentTarget:find("Ray", 1, true) or rentTarget:find("Rayman", 1, true) then
+            targetMatch = isRay ~= nil
         else -- Auto-Detect: semua item sewa valid
-            targetMatch = (isLSS or isLRay or isMRay) ~= nil
+            targetMatch = (isLSS or isLRay or isMRay or isRay) ~= nil
         end
 
         if targetMatch then
@@ -2443,23 +2443,27 @@ local function TabFarm()
         if w then worldName = w; RecalcMag(); Log("World: " .. w)
         else Log("`4Belum di dalam world") end
     end
-    ImGui.SameLine()
-    if Btn("Set Posisi Saya", T.accent, -1, 32) then
+    local posSet = S.PosX ~= 0 or S.PosY ~= 0
+    if Btn("Set Pos (Berdiri)", T.btn, Half(), 32) then
         local me = GetLocal()
         if me and me.pos then
             S.PosX = math.floor(me.pos.x / 32)
             S.PosY = math.floor(me.pos.y / 32)
-            Log(string.format("`2Farm Pos: (%d, %d)", S.PosX, S.PosY))
+            Log(string.format("`2Farm Pos (Berdiri): (%d, %d)", S.PosX, S.PosY))
             RecalcMag()
         else
             Log("`4Gagal mendeteksi posisi bot!")
         end
     end
-    local posSet = S.PosX ~= 0 or S.PosY ~= 0
+    ImGui.SameLine()
+    if Btn("Punch Tile Pos", CaptureFarmPos and T.accent or T.btn, -1, 32) then
+        CaptureFarmPos = true
+        Log("`9[Farm]`w Pukul/Punch tile tempat farm...")
+    end
     if posSet then
-        CText(T.ok, string.format("  Farm pos (%d, %d)  |  %d magplant", S.PosX, S.PosY, #Mag))
+        Row("Posisi Farm", string.format("(%d, %d)", S.PosX, S.PosY), T.ok)
     else
-        CText(T.bad, "  Farm pos belum di-set")
+        Row("Posisi Farm", "BELUM DI-SET", T.bad)
     end
     EndCard()
 
@@ -2557,6 +2561,7 @@ local function TabSetting()
                 { "LSS",  "Legendary Shard Sword" },
                 { "MRay", "Mythical Ray" },
                 { "LRay", "Legendary Ray" },
+                { "Ray",  "Rayman's Fist" },
             }
             local curTarget = S.PNB.RentTargetItem or "Auto-Detect"
             local btnW = (avail / #targets) - 3
@@ -2607,23 +2612,25 @@ local function TabSetting()
             end
 
             local rSet = S.RentX ~= 0 or S.RentY ~= 0
-            if Btn(rSet and string.format("[OK] Mesin: (%d, %d)", S.RentX, S.RentY) or "[!] Punch Renting Station", rSet and T.ok or T.bad, -1, 30) then
+            if Btn("Punch Mesin Sewa", CaptureRent and T.accent or T.btn, Half(), 30) then
                 CaptureRent = true
                 Log("`9[Rent]`w Punch Renting Station untuk set posisi...")
             end
-            local sSet = (S.RentStandX or 0) ~= 0 or (S.RentStandY or 0) ~= 0
-            if Btn(sSet and string.format("[OK] Berdiri: (%d, %d)", S.RentStandX or 0, S.RentStandY or 0) or "[!] Set Posisi Berdiri Sewa", sSet and T.accent or T.warn, -1, 30) then
+            ImGui.SameLine()
+            if Btn("Set Mesin (Berdiri)", T.btn, -1, 30) then
                 local me = GetLocal and GetLocal()
                 if me and me.pos then
-                    S.RentStandX = math.floor(me.pos.x / 32)
-                    S.RentStandY = math.floor(me.pos.y / 32)
-                    Log(string.format("`2[Rent]`w Berdiri sewa di-set: (%d, %d)", S.RentStandX, S.RentStandY))
+                    S.RentX = math.floor(me.pos.x / 32)
+                    S.RentY = math.floor(me.pos.y / 32)
+                    Log(string.format("`2[Rent]`w Mesin Sewa di-set (Berdiri): (%d, %d)", S.RentX, S.RentY))
                 end
             end
-            if sSet and ImGui.Button("Reset Posisi Berdiri##rst_stand", ImVec2(-1, 22)) then
-                S.RentStandX = 0; S.RentStandY = 0
+            if rSet then
+                Row("Mesin Sewa", string.format("(%d, %d)", S.RentX, S.RentY), T.ok)
+            else
+                Row("Mesin Sewa", "BELUM DI-SET", T.bad)
             end
-            if rSet and ImGui.Button("Reset Pos Mesin Sewa##rst_rent", ImVec2(-1, 22)) then
+            if rSet and ImGui.Button("Reset Pos Mesin##rst_rent", ImVec2(-1, 22)) then
                 S.RentX = 0; S.RentY = 0; RentExpires = 0
             end
         end
@@ -2821,7 +2828,7 @@ AddHook("OnDraw", "ZAKICIT_DRAW", function()
         { "Text",           T.text },
     })
 
-    if ImGui.Begin("ZAKICIT PNB v2 [06:30]") then
+    if ImGui.Begin("ZAKICIT PNB v2 [07:10]") then
         if ImGui.BeginTabBar("ZakiTabs") then
             if ImGui.BeginTabItem("Farm")    then Sp(2); TabFarm();    ImGui.EndTabItem() end
             if ImGui.BeginTabItem("Mag")     then Sp(2); TabMag();     ImGui.EndTabItem() end
@@ -2850,4 +2857,4 @@ do
     end
 end
 LoadSettings()
-Log("`2ZAKICIT PNB v2 [06:30] siap. Buka menu.")
+Log("`2ZAKICIT PNB v2 [07:10] siap. Buka menu.")

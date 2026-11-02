@@ -1,0 +1,27 @@
+{
+  "name": "gt-fleet-monitor",
+  "version": "2.0.0",
+  "main": "api/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node test/e2e.js"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.18.0",
+    "@upstash/redis": "^1.40.0",
+    "@vercel/blob": "^2.8.2",
+    "compression": "^1.8.2",
+    "cors": "^2.8.5",
+    "dotenv": "^18.0.8",
+    "express": "^4.22.3",
+    "helmet": "^8.3.0",
+    "zod": "^4.6.7"
+  },
+  "description": "GT Bot Fleet Monitor",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  }
+}

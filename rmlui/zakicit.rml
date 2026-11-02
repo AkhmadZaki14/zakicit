@@ -1,0 +1,297 @@
+<rml>
+    <head>
+        <title>ZAKICIT PNB v2</title>
+        <link type="text/rcss" href="zakicit.rcss"/>
+    </head>
+    <body>
+        <div class="window">
+            <!-- ════════════════════════════════════════
+                 WINDOW TITLEBAR
+                 ════════════════════════════════════════ -->
+            <div class="title-bar">
+                <span class="title-text">⚡ ZAKICIT PNB v2</span>
+                <div class="title-right">
+                    <span id="bot-status-badge" class="status-badge status-online">FARMING</span>
+                    <button class="btn-close" id="btn-close-window">✕</button>
+                </div>
+            </div>
+
+            <!-- ════════════════════════════════════════
+                 TAB NAVIGATION BAR
+                 ════════════════════════════════════════ -->
+            <div class="tab-bar">
+                <button class="tab-btn active" id="tab-btn-farm">Farm</button>
+                <button class="tab-btn" id="tab-btn-mag">Magplant</button>
+                <button class="tab-btn" id="tab-btn-paywall">Paywall</button>
+                <button class="tab-btn" id="tab-btn-rent">Renting</button>
+                <button class="tab-btn" id="tab-btn-setting">Setting</button>
+                <button class="tab-btn" id="tab-btn-config">Config</button>
+            </div>
+
+            <!-- ════════════════════════════════════════
+                 TAB 1: FARM (MAIN ZERO-SCROLL)
+                 ════════════════════════════════════════ -->
+            <div class="tab-content active" id="tab-farm">
+                <!-- Action Start / Stop -->
+                <div class="btn-group">
+                    <button class="btn btn-start" id="btn-start-pnb">START PNB</button>
+                    <button class="btn btn-stop" id="btn-stop-pnb">STOP PNB</button>
+                </div>
+
+                <!-- Live Stats Card -->
+                <div class="card">
+                    <div class="card-title">Live Statistics</div>
+                    <div class="stat-row">
+                        <span class="stat-label">Total Gems</span>
+                        <span class="stat-val neon-cyan" id="stat-gems">1,842,500</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Laju Panen (Gems/Jam)</span>
+                        <span class="stat-val neon-pink" id="stat-rate">1.25M / jam</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Lock (DL / BGL)</span>
+                        <span class="stat-val neon-yel" id="stat-locks">1 DL / 11 BGL</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Remote &amp; Mag Aktif</span>
+                        <span class="stat-val" id="stat-remote">1x | Mag (15, 23)</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Uptime Sesi</span>
+                        <span class="stat-val neon-green" id="stat-uptime">02:45:18</span>
+                    </div>
+                </div>
+
+                <!-- World & Pos Card -->
+                <div class="card">
+                    <div class="card-title">World &amp; Koordinat Farm</div>
+                    <div class="input-row">
+                        <input type="text" class="input-text" id="input-world" value="NIGGUY" />
+                        <button class="btn btn-cyan" id="btn-use-world">Pakai World Ini</button>
+                    </div>
+                    <div class="input-row" style="margin-top: 4px;">
+                        <button class="btn btn-cyan" style="flex: 1;" id="btn-set-farmpos">[OK] Farm Pos: (19, 25)</button>
+                    </div>
+                </div>
+
+                <!-- BFG Facing Direction -->
+                <div class="card">
+                    <div class="card-title">Arah Hadap BFG</div>
+                    <div class="btn-group">
+                        <button class="btn btn-pink" id="btn-face-left">◄ HADAP KIRI</button>
+                        <button class="btn btn-cyan" id="btn-face-right">HADAP KANAN ►</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ════════════════════════════════════════
+                 TAB 2: MAGPLANT (SMART AUTO-FIND)
+                 ════════════════════════════════════════ -->
+            <div class="tab-content" id="tab-mag">
+                <div class="card">
+                    <div class="card-title">Monitor Magplant di World</div>
+                    <div class="stat-row">
+                        <span class="stat-label">Total Terdeteksi</span>
+                        <span class="stat-val" id="mag-total">8 Mesin</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Siap Panen (Ready)</span>
+                        <span class="stat-val neon-green" id="mag-ready">6 Mesin</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Kosong (Empty)</span>
+                        <span class="stat-val neon-red" id="mag-empty">2 Mesin</span>
+                    </div>
+                    <div class="btn-group" style="margin-top: 6px;">
+                        <button class="btn btn-cyan" id="btn-rescan-mag">Scan Ulang Mag</button>
+                        <button class="btn btn-yel" id="btn-reset-empty-mag">Reset Status Kosong</button>
+                    </div>
+                </div>
+
+                <!-- Filter BG -->
+                <div class="card">
+                    <div class="card-title">Filter Background ID</div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="chk-scan-bg" />
+                        <span>Filter Magplant berdasarkan Background</span>
+                    </div>
+                    <div class="input-row">
+                        <input type="text" class="input-text" id="input-bg-id" value="0" />
+                    </div>
+                </div>
+
+                <!-- Mag List -->
+                <div class="card">
+                    <div class="card-title">5 Magplant Terdekat ke Farm Pos</div>
+                    <div class="mag-list" id="mag-list-box">
+                        <div class="mag-item ready">
+                            <span>[*] Mag (15, 23) - Jarak: 4 tile</span>
+                            <span>READY</span>
+                        </div>
+                        <div class="mag-item ready">
+                            <span>[2] Mag (16, 23) - Jarak: 5 tile</span>
+                            <span>READY</span>
+                        </div>
+                        <div class="mag-item empty">
+                            <span>[3] Mag (12, 24) - Jarak: 8 tile</span>
+                            <span>EMPTY (03m 12s)</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ════════════════════════════════════════
+                 TAB 3: PAYWALL (AUTO-RENEW & POSGUARD)
+                 ════════════════════════════════════════ -->
+            <div class="tab-content" id="tab-paywall">
+                <div class="card">
+                    <div class="card-title">Fitur Auto Renew Paywall</div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="chk-auto-paywall" checked="checked" />
+                        <span>Aktifkan Sensor &amp; Auto Paywall</span>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="chk-renew-paywall" checked="checked" />
+                        <span>Auto Renew (Perpanjang sebelum habis)</span>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="chk-buy-paywall" />
+                        <span>Auto Beli Paksa (Jika dicabut owner)</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Posisi &amp; Durasi Pintu</div>
+                    <button class="btn btn-cyan" id="btn-set-paywall">[OK] Paywall: (12, 24)</button>
+                    <div class="stat-row" style="margin-top: 6px;">
+                        <span class="stat-label">Sisa Durasi Akses</span>
+                        <span class="stat-val neon-green" id="stat-paywall-rem">58m 39s</span>
+                    </div>
+                    <div class="btn-group" style="margin-top: 6px;">
+                        <button class="btn btn-cyan" id="btn-check-paywall">Cek Paywall Sekarang</button>
+                        <button class="btn btn-yel" id="btn-reset-paywall">Reset Posisi</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ════════════════════════════════════════
+                 TAB 4: RENTING STATION / MRAY
+                 ════════════════════════════════════════ -->
+            <div class="tab-content" id="tab-rent">
+                <div class="card">
+                    <div class="card-title">Auto Sewa Mray / Alat Break</div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="chk-auto-rent" checked="checked" />
+                        <span>Aktifkan Auto Rent / Sewa Mray</span>
+                    </div>
+                    <div class="input-row">
+                        <input type="text" class="input-text" id="input-rent-world" value="SEWA" />
+                        <button class="btn btn-cyan" id="btn-use-rent-world">World Ini</button>
+                    </div>
+                    <button class="btn btn-cyan" style="margin-top: 4px;" id="btn-set-rent-pos">[OK] Rent Station: (18, 24)</button>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Status Sewa &amp; Item di Badan</div>
+                    <div class="stat-row">
+                        <span class="stat-label">Sisa Durasi Sewa</span>
+                        <span class="stat-val neon-green" id="stat-rent-rem">1d 22h 59m 02s</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Status di Badan</span>
+                        <span class="stat-val neon-green" id="stat-rent-equipped">TERPASANG [OK]</span>
+                    </div>
+                    <div class="btn-group" style="margin-top: 6px;">
+                        <button class="btn btn-cyan" id="btn-check-rent">Cek &amp; Pasang Sewa</button>
+                        <button class="btn btn-pink" id="btn-war-rent">WAR SEWA SEKARANG</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ════════════════════════════════════════
+                 TAB 5: SETTING & FITUR
+                 ════════════════════════════════════════ -->
+            <div class="tab-content" id="tab-setting">
+                <div class="card">
+                    <div class="card-title">Fitur Bot</div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="chk-modfly" checked="checked" />
+                        <span>Modfly</span>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="chk-antilag" checked="checked" />
+                        <span>AntiLag / FC Prevention</span>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="chk-auto-collect" checked="checked" />
+                        <span>Auto Collect Gems</span>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="chk-auto-suck" checked="checked" />
+                        <span>Auto Suck Black Gems</span>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="chk-auto-consume" checked="checked" />
+                        <span>Auto Consume Arroz &amp; Clover</span>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="chk-convert-dl" />
+                        <span>Convert Gems ke DL &amp; BGL</span>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="chk-enable-monitor" checked="checked" />
+                        <span>Web Monitor Vercel &amp; WhatsApp Alert</span>
+                    </div>
+                </div>
+
+                <!-- Delay Presets -->
+                <div class="card">
+                    <div class="card-title">Preset Kecepatan / Delay</div>
+                    <div class="btn-group">
+                        <button class="btn btn-cyan">Fast (60%)</button>
+                        <button class="btn btn-cyan">Normal (100%)</button>
+                        <button class="btn btn-cyan">Safe (200%)</button>
+                        <button class="btn btn-cyan">Pelan (300%)</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ════════════════════════════════════════
+                 TAB 6: PROFILE CONFIG & LOGS
+                 ════════════════════════════════════════ -->
+            <div class="tab-content" id="tab-config">
+                <!-- Multi-Profile Slots -->
+                <div class="card">
+                    <div class="card-title">Multi-Profile Slot</div>
+                    <div class="stat-label" style="margin-bottom: 4px;">Simpan Profile ke Slot:</div>
+                    <div class="btn-group">
+                        <button class="btn btn-cyan" id="btn-save-u1">SAVE USER 1</button>
+                        <button class="btn btn-cyan" id="btn-save-u2">SAVE USER 2</button>
+                        <button class="btn btn-cyan" id="btn-save-u3">SAVE USER 3</button>
+                    </div>
+                    <div class="stat-label" style="margin-top: 8px; margin-bottom: 4px;">Muat Profile dari Slot:</div>
+                    <div class="btn-group">
+                        <button class="btn btn-yel" id="btn-load-u1">LOAD USER 1</button>
+                        <button class="btn btn-yel" id="btn-load-u2">LOAD USER 2</button>
+                        <button class="btn btn-yel" id="btn-load-u3">LOAD USER 3</button>
+                    </div>
+                </div>
+
+                <!-- Terminal Log Viewer -->
+                <div class="card">
+                    <div class="card-title">Console Log</div>
+                    <div class="log-box" id="console-log-box">
+                        [02:45:10] Starting ZAKICIT PNB v2...<br/>
+                        [02:45:11] Auto-find magplant: 8 ditemukan (paling dekat dulu)<br/>
+                        [02:45:12] [Rent] Sisa durasi sewa: 1d 22h 59m 02s (Status: TERPASANG)<br/>
+                        [02:45:14] [BFG] Hadap KANAN di farm pos<br/>
+                        [02:45:15] [PosGuard] Masuk Farm Pos (19, 25) terverifikasi OK!<br/>
+                        [02:45:16] PNB aktif. Panen berjalan...
+                    </div>
+                    <button class="btn btn-cyan" style="margin-top: 6px;" id="btn-clear-log">Clear Log</button>
+                </div>
+            </div>
+        </div>
+    </body>
+</rml>
