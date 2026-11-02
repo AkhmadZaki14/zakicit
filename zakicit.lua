@@ -2601,7 +2601,6 @@ local function TabSetting()
             { "LSS",  "Legendary Shard Sword" },
             { "MRay", "Mythical Ray" },
             { "LRay", "Legendary Ray" },
-            { "LIF",  "Legendary Infinity Fist" },
         }
         local curTarget = S.PNB.RentTargetItem or "Auto-Detect"
         local btnW = (avail / #targets) - 3
@@ -2769,27 +2768,7 @@ local function TabSetting()
     end
     Sp(6)
 
-    -- ═══ 4. ITEM BAJU FARM (PNB WEAR) ═══
-    SectionRGB("ITEM WEAR FARM (PNB)")
-    CText(C.text_dim, "Baju saat farming (Wear saat Start PNB):")
-    local curWear = S.PNB.WearItem or "Pickaxe"
-    local wearW = (avail / 4) - 3
-    for i, item in ipairs(WearList) do
-        local isSel = (curWear == item)
-        local nP = PushCols({
-            { "Button", isSel and {0.2, 0.8, 0.4, 1} or {0.12, 0.12, 0.22, 1} },
-            { "ButtonActive", C.neon_green },
-        })
-        if ImGui.Button(item .. "##wear" .. i, ImVec2(wearW, 28)) then
-            S.PNB.WearItem = item
-            Log("Wear Item: " .. item)
-        end
-        PopCols(nP)
-        if i % 4 ~= 0 and i < #WearList then ImGui.SameLine() end
-    end
-    Sp(6)
-
-    -- ═══ 5. FITUR & TOGGLE PNB ═══
+    -- ═══ 4. FITUR & TOGGLE PNB ═══
     SectionRGB("FITUR & TOGGLE")
     local opts = {
         { "Modfly",            "Modfly" },
@@ -2817,7 +2796,7 @@ local function TabSetting()
     if chTok then S.PNB.MonitorToken = tostring(nvTok) end
     Sp(6)
 
-    -- ═══ 6. DELAY SPEED ═══
+    -- ═══ 5. DELAY SPEED ═══
     SectionRGB("DELAY SPEED")
     local cbc, bcv = ImGui.InputInt("Delay Buy Cheat (menit)", S.DelayBuyCheat)
     if cbc then S.DelayBuyCheat = math.max(1, bcv) end
