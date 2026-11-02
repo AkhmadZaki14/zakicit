@@ -1986,6 +1986,9 @@ AddHook("OnVariant", "PNB_VAR", function(var)
         -- RENTING 1: Intercept Self-Wrench Popup -> HANYA JIKA bot yang memicu (BotTriggeredWrench == true)
         -- Jika USER MANUAL yang klik wrench badannya sendiri, BIARKAN POPUP TERBUKA BEBAS tanpa diganggu script!
         if BotTriggeredWrench and a:find("clothlease", 1, true) and (a:find("dialog_name|popup", 1, true) or a:find("Active effects:", 1, true) or a:find("Cloth Renting", 1, true)) then
+            -- DEBUG: Log raw popup untuk diagnosis
+            local shortPopup = StripColor(a):sub(1, 300)
+            Log("`3[Rent:PopupRAW]`w " .. shortPopup)
             -- Sensor dinamis: cek apakah item sewaan ada di Active Effects
             local activeEff = a:match("Active effects:(.-)You have") or a:match("Active effects:(.-)%|") or a:match("Active effects:(.*)") or ""
             local effLow = activeEff:lower()
@@ -2022,6 +2025,9 @@ AddHook("OnVariant", "PNB_VAR", function(var)
         -- RENTING 2: Intercept Menu clothlease -> Parse durasi (D, H, M, S) + pasang jika belum terpasang
         if a:find("clothlease", 1, true) or a:find("Rented Clothing", 1, true) then
             local clean = StripColor(a)
+            -- DEBUG: Log raw dialog untuk diagnosis
+            local shortRaw = clean:sub(1, 300)
+            Log("`3[Rent:RAW]`w " .. shortRaw)
             -- Cari tombol cloth_ (misal cloth_-258) dan icon item ID (misal 16690)
             local btn = clean:match("(cloth_%-?%d+)")
             local rawId = clean:match("cloth_%-?%d+|.-|staticframe|(%d+)")
