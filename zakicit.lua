@@ -34,6 +34,7 @@ Setting = {
         AutoPaywall       = false,   -- aktifkan fitur cek/sensor paywall
         AutoRenewPaywall  = false,   -- auto renew sebelum habis (timer ~2 menit sebelum expire)
         AutoBuyPaywall    = false,   -- auto beli ulang kalau dicabut paksa / expired mendadak
+        RentTargetItem    = "Auto-Detect", -- Item sewa yang diharapkan (LSS, MRay, LRay, Auto-Detect)
         AutoRent          = false,   -- auto rent mray/item dari renting station
         RentWorld         = "",      -- world renting station
         MonitorToken      = "",      -- [8] Token remote monitor (X-Monitor-Token)
@@ -1505,11 +1506,12 @@ function SaveSettings(slot)
 end
 
 local STRING_KEYS = {
-    World        = true,
-    WearItem     = true,
-    WebhookURL   = true,
-    MonitorToken = true,
-    RentWorld    = true,
+    World          = true,
+    WearItem       = true,
+    WebhookURL     = true,
+    MonitorToken   = true,
+    RentWorld      = true,
+    RentTargetItem = true,
 }
 
 function LoadSettings(slot)
@@ -1949,15 +1951,34 @@ AddHook("OnVariant", "PNB_VAR", function(var)
         -- Jika user manual wrench diri sendiri, jangan di-intercept agar menu profil/cheats tetap bisa dibuka bebas!
         if RentChecking and a:find("clothlease", 1, true) and (a:find("dialog_name|popup", 1, true) or a:find("Active effects:", 1, true) or a:find("Cloth Renting", 1, true)) then
             -- Sensor dinamis: cek apakah item sewaan ada di Active Effects
-            local activeEff = a:match("Active effects:(.-)You have") or a:match("Active effects:(.*)") or ""
-            if RentItemId ~= "" and activeEff:find(RentItemId, 1, true) then
-                RentEquipped = true
-            elseif activeEff:find("Legendary Shard Sword", 1, true) or activeEff:find("16690", 1, true) or activeEff:find("16858", 1, true) then
+            local activeEff = a:match("Active effects:(.-)You have") or a:match("Active effects:(.-)%|") or a:match("Active effects:(.*)") or ""
+            local effLow = activeEff:lower()
+
+            -- Keywords umum semua item sewaan (mray, lray, lss, lif)
+            local autoMatch = effLow:find("shard") or effLow:find("sword") or
+                              effLow:find("ray") or effLow:find("fist") or
+                              effLow:find("mray") or effLow:find("lray") or
+                              effLow:find("lss") or effLow:find("lease") or
+                              effLow:find("rented") or effLow:find("16690") or
+                              effLow:find("16858") or effLow:find("15444") or
+                              effLow:find("15694") or effLow:find("15730")
+
+            -- Jika user memilih item spesifik, cek nama itu duluan
+            local target = S.PNB.RentTargetItem or "Auto-Detect"
+            local nameMatch = false
+            if target ~= "Auto-Detect" then
+                nameMatch = effLow:find(target:lower(), 1, true)
+            end
+
+            -- Jika RentItemId sudah terisi dari dialog clothlease, cek juga
+            local idMatch = RentItemId ~= "" and activeEff:find(RentItemId, 1, true)
+
+            if idMatch or nameMatch or (target == "Auto-Detect" and autoMatch) then
                 RentEquipped = true
             else
                 RentEquipped = false
             end
-            Log(string.format("`9[Rent]`w Status di badan: %s. Membuka Cloth Renting...", RentEquipped and "TERPASANG [OK]" or "BELUM [!]"))
+            Log(string.format("`9[Rent]`w Status di badan: %s (target: %s). Membuka Cloth Renting...", RentEquipped and "TERPASANG [OK]" or "BELUM [!]", target))
             SendPacket(2, "action|dialog_return\ndialog_name|popup\nbuttonClicked|clothlease\n")
             return true
         end
@@ -2638,6 +2659,18 @@ local function TabSetting()
         local rTxt = remRent > 0 and ("Sisa Durasi Sewa: " .. FTime(remRent)) or "Sewa Habis / Belum Disewa"
         CText(rCol, "  " .. rTxt)
         CText(RentEquipped and C.neon_green or C.neon_red, "  Status di Badan: " .. (RentEquipped and "TERPASANG [OK]" or "BELUM DIPAKAI [!]"))
+        Sp(3)
+
+        -- Pilihan target item sewa
+        CText(C.neon_cyan, "Target Item Sewa (untuk deteksi status):")
+        local rentTargets = { "Auto-Detect", "Legendary Shard Sword", "Mythical Ray", "Legendary Ray", "Legendary Infinity Fist" }
+        for _, itm in ipairs(rentTargets) do
+            if ImGui.Selectable(itm .. "##rtg", (S.PNB.RentTargetItem or "Auto-Detect") == itm) then
+                S.PNB.RentTargetItem = itm
+                Log("`2[Rent]`w Target item sewa: " .. itm)
+            end
+        end
+        Sp(4)
 
         if NButton("Cek & Pasang Sewa Sekarang", C.neon_cyan, -1, 32) then
             RunThread(function()
