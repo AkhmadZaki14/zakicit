@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T03:30:00 CACHE_BUST_DIAGNOSTIC
+--  BUILD: 2026-11-03T03:35:00 FORCE_PUSH_DIAGNOSTIC
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -2381,7 +2381,7 @@ local function TabFarm()
     -- Status mini
     CText(running and C.neon_green or C.neon_red,
         running and ("  " .. Run.status) or "  Idle")
-    CText(C.text_dim, "  Build: 2026-11-03 03:30 | Branch: main | Diagnostic")
+    CText(C.text_dim, "  Build: 2026-11-03 03:35 | Branch: main | FORCE PUSH")
     Sp(4)
     Sep(C.border)
 
