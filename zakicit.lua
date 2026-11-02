@@ -52,6 +52,8 @@ Setting = {
     PaywallY  = 0,
     RentX     = 0,
     RentY     = 0,
+    RentStandX= 0,
+    RentStandY= 0,
     Delay     = {},
     DelayBuyCheat      = 30,
 }
@@ -1082,40 +1084,34 @@ local function DoWarRent()
         Sleep(300) -- buffer kecil tambahan
     end
 
-    -- [FIX 2] Cari tile adjacent yang benar-benar bisa diinjak
-    -- Jika FindAdjacent gagal (tile belum load), coba offset sederhana
-    local ax, ay = FindAdjacent(S.RentX, S.RentY)
-    if not ax then
-        -- Coba offset manual kiri/kanan/bawah
-        for _, off in ipairs({ {-1,0},{1,0},{0,1},{-2,0},{2,0} }) do
-            ax, ay = S.RentX + off[1], S.RentY + off[2]
-            break
-        end
-    end
-    Log(string.format("`9[Rent]`w Menuju Renting Station (%d, %d), berdiri di (%d, %d)...", S.RentX, S.RentY, ax, ay))
+    -- [POSISI BERDIRI TEPAT]
+    -- Gunakan koordinat berdiri yang diset user, atau default ke mesin sewa
+    local targetStandX = (S.RentStandX and S.RentStandX ~= 0) and S.RentStandX or S.RentX
+    local targetStandY = (S.RentStandY and S.RentStandY ~= 0) and S.RentStandY or S.RentY
+
+    Log(string.format("`9[Rent]`w Menuju posisi sewa (%d, %d)...", targetStandX, targetStandY))
     Run.status = "Moving to Rent Station"
-    SlowFindPath(ax, ay, D("PathStep"))
+    SlowFindPath(targetStandX, targetStandY, D("PathStep"))
     Sleep(D("RemoteStep"))
 
-    -- [FIX 3] Verifikasi posisi: jika masih jauh (>5 tile) coba FindPath native sekali
+    -- Verifikasi posisi harus pas persis di koordinat target
     do
         local me = GetLocal()
-        local curX = me and math.floor(me.pos.x / 32) or ax
-        local curY = me and math.floor(me.pos.y / 32) or ay
-        local dist = math.abs(curX - S.RentX) + math.abs(curY - S.RentY)
-        if dist > 5 then
-            Log(string.format("`4[Rent]`w Masih jauh dari mesin (%d tile). Paksa FindPath native...", dist))
-            FindPath(ax, ay, D("PathStep"))
-            Sleep(D("Join"))
+        local curX = me and math.floor(me.pos.x / 32) or targetStandX
+        local curY = me and math.floor(me.pos.y / 32) or targetStandY
+        if curX ~= targetStandX or curY ~= targetStandY then
+            Log(string.format("`3[Rent]`w Posisi belum pas (%d, %d) vs target (%d, %d). Reposisi paksa...", curX, curY, targetStandX, targetStandY))
+            FindPath(targetStandX, targetStandY, D("PathStep"))
+            Sleep(D("RemoteStep"))
         end
     end
 
-    Log("`2[Rent]`w Standby di depan mesin! Memulai Wrench War...")
+    Log("`2[Rent]`w Standby persis di depan mesin! Memulai Wrench War...")
     Run.status = "WAR Renting..."
     RentStep = "WAIT_BUY"
 
-    -- State machine war sewa (max 45 detik):
-    local maxWarSec = 45
+    -- State machine war sewa: durasi dinaikkan jadi 120 detik agar tidak keburu timeout
+    local maxWarSec = 120
     local startWar = NowTime()
     local lastWrench = 0
 
@@ -1123,6 +1119,14 @@ local function DoWarRent()
         if RentSuccess then break end
 
         local now = NowTime()
+
+        -- Pastikan bot tidak tergeser saat war
+        local me = GetLocal()
+        local curX = me and math.floor(me.pos.x / 32) or targetStandX
+        local curY = me and math.floor(me.pos.y / 32) or targetStandY
+        if curX ~= targetStandX or curY ~= targetStandY then
+            FindPath(targetStandX, targetStandY, D("PathStep"))
+        end
 
         if RentStep == "WAIT_BUY" then
             if now - lastWrench >= 1 or lastWrench == 0 then
@@ -1154,20 +1158,22 @@ local function DoWarRent()
         Sleep(D("RemoteDialog"))
         CheckRentStatus(true)
         Sleep(D("AfterRemote"))
+
+        -- Hanya pulang ke world PNB jika SUDAH berhasil sewa dan item terpasang!
+        if S.World and S.World ~= "" and WorldNow() ~= S.World:upper() then
+            Log("`9[Rent]`w Sewa sukses! Kembali ke world PNB: " .. S.World)
+            Run.status = "Returning to PNB World"
+            Join(S.World:upper())
+            Sleep(D("Join"))
+        end
     else
-        -- [FIX 4] Timeout sewa: kirim WA alert, set flag agar Step tahu bot BELUM punya item
-        Log("`4[Rent]`w Timeout / Gagal sewa! Kirim alert WA...")
+        -- [SENSOR WAJIB SEWA] Jika belum berhasil sewa: DILARANG PULANG KE WORLD BFG!
+        Log("`4[Rent]`w Belum berhasil sewa pada sesi ini! Tetap standby di world sewa untuk retry...")
         RentExpires = 0
         RentEquipped = false
-        pcall(SendWhatsAppAlert, "Gagal Sewa Mray (Timeout)", string.format("War renting timeout 45s di world %s mesin (%d,%d). Bot kembali ke farm tapi item BELUM terpasang!", rentWorld, S.RentX, S.RentY))
-    end
-
-    -- Balik ke world PNB utama
-    if S.World and S.World ~= "" and WorldNow() ~= S.World:upper() then
-        Log("`9[Rent]`w Kembali ke world PNB: " .. S.World)
-        Run.status = "Returning to PNB World"
-        Join(S.World:upper())
-        Sleep(D("Join"))
+        pcall(SendWhatsAppAlert, "Gagal Sewa Mray (Standby Retry)", string.format("War 120s di world %s mesin (%d,%d) belum dapat. Bot TETAP di world sewa & standby retry (TIDAK pulang bfg tangan kosong).", rentWorld, S.RentX, S.RentY))
+        Run.status = "Gagal Sewa (Standby Retry)"
+        Sleep(5000) -- Istirahat 5s lalu loop berikutnya otomatis DoWarRent lagi
     end
 end
 
@@ -1466,6 +1472,8 @@ function SaveSettings(slot)
             f:write("Setting.PaywallY=" .. tostring(S.PaywallY) .. "\n")
             f:write("Setting.RentX=" .. tostring(S.RentX) .. "\n")
             f:write("Setting.RentY=" .. tostring(S.RentY) .. "\n")
+            f:write("Setting.RentStandX=" .. tostring(S.RentStandX or 0) .. "\n")
+            f:write("Setting.RentStandY=" .. tostring(S.RentStandY or 0) .. "\n")
             f:write("Setting.DelayBuyCheat=" .. tostring(S.DelayBuyCheat) .. "\n")
             for k, v in pairs(S.Delay) do
                 f:write("Delay." .. k .. "=" .. tostring(v) .. "\n")
@@ -2586,6 +2594,29 @@ local function TabSetting()
             CaptureRent = true
             Log("`9[Rent]`w Punch Renting Station sekarang untuk set posisi...")
         end
+
+        -- Posisi berdiri tepat (presisi 0 toleransi saat war sewa)
+        local sSet = (S.RentStandX or 0) ~= 0 or (S.RentStandY or 0) ~= 0
+        local sLabel = sSet
+            and string.format("[OK] Berdiri di: (%d, %d)", S.RentStandX or 0, S.RentStandY or 0)
+            or "[!] Set Posisi Berdiri Sewa (wajib tepat!)"
+        if NButton(sLabel, sSet and C.neon_cyan or C.neon_yel, -1, 30) then
+            local me = GetLocal and GetLocal()
+            if me and me.pos then
+                S.RentStandX = math.floor(me.pos.x / 32)
+                S.RentStandY = math.floor(me.pos.y / 32)
+                Log(string.format("`2[Rent]`w Posisi berdiri sewa di-set ke (%d, %d)", S.RentStandX, S.RentStandY))
+            end
+        end
+        if sSet then
+            CText(C.text_dim, string.format("  Berdiri persis di (%d, %d) saat war sewa.", S.RentStandX, S.RentStandY))
+            if ImGui.Button("Reset Posisi Berdiri", ImVec2(-1, 24)) then
+                S.RentStandX = 0; S.RentStandY = 0
+            end
+        else
+            CText(C.neon_yel, "  Klik tombol di atas saat berdiri persis di depan mesin!")
+        end
+        Sp(3)
 
         local remRent = math.max(0, RentExpires - NowTime())
         local rCol = remRent > 300 and C.neon_green or (remRent > 0 and C.neon_yel or C.neon_red)
