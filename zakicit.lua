@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T02:45:00 CACHE_BUST
+--  BUILD: 2026-11-03T02:55:00 CACHE_BUST_MUTLAK_RENT
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -1673,6 +1673,32 @@ local function Step()
         DoWarRent()
     end
 
+    -- ╔════════════════════════════════════════════════════════════╗
+    -- ║ GUARD MUTLAK: ITEM SEWA WAJIB TERPASANG SEBELUM APAPUN  ║
+    -- ║ Jika AutoRent aktif dan item BELUM di badan:             ║
+    -- ║ DILARANG: farm, ambil remote, jalan ke farm pos, mukul   ║
+    -- ║ Bot HANYA boleh coba pasang item atau sewa!              ║
+    -- ╚════════════════════════════════════════════════════════════╝
+    if S.PNB.AutoRent and not RentEquipped then
+        Cheat(false)
+        m = false
+        if RentExpires > NowTime() then
+            Run.status = "WAJIB PASANG Item Sewa!"
+            Log("`4[RentGuard]`w DILARANG FARM! Item sewa belum terpasang (sisa " .. FTime(RentExpires - NowTime()) .. "). Memasang sekarang...")
+            CheckRentStatus(true)
+        else
+            Run.status = "WAJIB SEWA Dulu!"
+            Log("`4[RentGuard]`w DILARANG FARM! Sewa habis/belum ada. Menuju world sewa...")
+            if S.RentX ~= 0 then
+                DoWarRent()
+            else
+                Log("`4[RentGuard]`w Posisi Renting Station belum di-set! Bot standby...")
+            end
+        end
+        Sleep(3000)
+        return
+    end
+
     if changeRemote or inv(5640) == 0 then
         -- [17] Jika remote habis dan AutoChangeRemote mati -> Stop PNB
         if inv(5640) == 0 and not S.PNB.AutoChangeRemote then
@@ -1728,30 +1754,7 @@ local function Step()
             end
             Sleep(D("FaceDelay"))
 
-            -- [GUARD ANTI-TANGAN-KOSONG MUTLAK]
-            -- Jika fitur AutoRent aktif dan item BELUM terpasang di badan (RentEquipped == false):
-            -- BOT WAJIB MEMAKAI BARANG SEWAAN. DILARANG KERAS MEMUKUL / BFG!
-            if S.PNB.AutoRent and not RentEquipped then
-                Cheat(false)
-                m = false
-                if RentExpires > NowTime() then
-                    -- Durasi sewa masih ada, tapi item belum terpasang di badan:
-                    Log("`9[RentGuard]`w Barang sewaan ada (" .. FTime(RentExpires - NowTime()) .. ") tapi BELUM TERPASANG! Pasang sekarang...")
-                    Run.status = "Memasang Barang Sewa..."
-                    if RentClothBtn ~= "" then
-                        SilentEquipRent()
-                    else
-                        CheckRentStatus(true)
-                    end
-                else
-                    -- Sewa habis atau belum disewa: WAJIB SEWA, JANGAN PASRAH!
-                    Log("`4[RentGuard]`w Durasi sewa habis/belum ada! Otomatis menuju world sewa untuk sewa...")
-                    Run.status = "Menuju World Sewa..."
-                    DoWarRent()
-                end
-                Sleep(2000)
-                return
-            end
+            -- [GUARD ANTI-TANGAN-KOSONG sudah di paling atas Step() — tidak perlu duplikat di sini]
 
             -- Auto-place remote & showhand sebelum cheat aktif (mengunci posisi target)
             PlaceShowHand(targetPlaceX, S.PosY)
@@ -1977,11 +1980,11 @@ AddHook("OnVariant", "PNB_VAR", function(var)
     if k == "OnDialogRequest" and type(a) == "string" then
         -- RENTING 1: Intercept Self-Wrench Popup -> deteksi RentEquipped dari Active effects: lalu buka clothlease
         -- Hanya diproses jika BotTriggeredWrench (bot yang wrench, bukan user manual)
-        if BotTriggeredWrench and a:find("dialog_name|popup", 1, true) and a:find("clothlease", 1, true) then
+        if BotTriggeredWrench and (a:find("end_dialog|popup", 1, true) or a:find("clothlease", 1, true)) and a:find("add_button|clothlease|", 1, true) then
             local clean = StripColor(a)
             local target = S.PNB.RentTargetItem or "Auto-Detect"
             -- Ambil bagian Active effects: saja
-            local effectsPart = clean:match("Active effects:(.-)end_dialog") or ""
+            local effectsPart = clean:match("Active effects:(.-)end_dialog") or clean
             local isEquipped = false
             if target:find("LSS", 1, true) or target:find("Legendary Shard Sword", 1, true) then
                 isEquipped = effectsPart:find("16690", 1, true) ~= nil or effectsPart:lower():find("shard sword", 1, true) ~= nil
@@ -1992,7 +1995,7 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             else -- Auto-Detect
                 isEquipped = effectsPart:find("16690", 1, true) ~= nil or effectsPart:find("16940", 1, true) ~= nil or effectsPart:find("19676", 1, true) ~= nil
             end
-            RentEquipped = isEquipped
+            RentEquipped = (isEquipped ~= nil and isEquipped ~= false)
             Log(string.format("`2[Rent]`w Status di badan (Active effects): %s", RentEquipped and "`2TERPASANG`w" or "`4BELUM`w"))
             -- Lanjut buka menu clothlease untuk baca durasi
             SendPacket(2, "action|dialog_return\ndialog_name|popup\nbuttonClicked|clothlease\n")
@@ -2001,7 +2004,7 @@ AddHook("OnVariant", "PNB_VAR", function(var)
 
         -- RENTING 2: Intercept Menu Rented Clothing (clothlease) -> parse durasi + pasang jika perlu
         -- Format: add_button_with_icon|cloth_-258|`223h 58m 35s``|staticframe|16690||
-        if a:find("end_dialog|clothlease|", 1, true) then
+        if a:find("clothlease", 1, true) and (a:find("Rented Clothing", 1, true) or a:find("staticframe", 1, true)) then
             local clean = StripColor(a)
             local target = S.PNB.RentTargetItem or "Auto-Detect"
             -- Pilih targetFrame berdasarkan setting user
