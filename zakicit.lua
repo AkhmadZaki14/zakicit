@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T04:30:00 ANTI_MISCLICK_BTN
+--  BUILD: 2026-11-03T04:45:00 SAFE_MANUAL_WRENCH
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -2072,8 +2072,8 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             return true
         end
 
-        -- RENTING 3: Intercept dialog konfirmasi sewa (rent_buyconfirm) — HARUS DI ATAS rent_buy!
-        if a:find("rent_buyconfirm", 1, true) or a:find("Purchase Confirmation", 1, true) then
+        -- RENTING 3: Intercept dialog konfirmasi sewa (rent_buyconfirm) — HANYA jika bot sedang war sewa!
+        if RentWarActive and (a:find("rent_buyconfirm", 1, true) or a:find("Purchase Confirmation", 1, true)) then
             local wtb = a:match("embed_data|wtb|([%d%-]+)")
             local rx = a:match("embed_data|x|(%d+)") or S.RentX
             local ry = a:match("embed_data|y|(%d+)") or S.RentY
@@ -2087,8 +2087,8 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             return true
         end
 
-        -- RENTING 4: Intercept dialog Renting Station (rent_buy)
-        if a:find("rent_buy", 1, true) or a:find("Renting Station", 1, true) then
+        -- RENTING 4: Intercept dialog Renting Station (rent_buy) — HANYA jika bot sedang war sewa!
+        if RentWarActive and (a:find("rent_buy", 1, true) or a:find("Renting Station", 1, true)) then
             local rx = a:match("embed_data|x|(%d+)") or S.RentX
             local ry = a:match("embed_data|y|(%d+)") or S.RentY
             Log(string.format("`2[Rent]`w Dialog mesin sewa terbuka! Mengirim konfirmasi sewa (%d, %d)...", tonumber(rx), tonumber(ry)))
@@ -2401,7 +2401,7 @@ local function TabFarm()
     -- Status mini
     CText(running and C.neon_green or C.neon_red,
         running and ("  " .. Run.status) or "  Idle")
-    CText(C.text_dim, "  Build: 2026-11-03 04:30 | ANTI MISCLICK")
+    CText(C.text_dim, "  Build: 2026-11-03 04:45 | SAFE MANUAL WRENCH")
     Sp(4)
     Sep(C.border)
 
