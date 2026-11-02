@@ -179,6 +179,29 @@ local function WebhookNotify(eventType, detail)
     table.insert(WebhookQueue, { type = eventType, detail = tostring(detail or "") })
 end
 
+-- [WA ALERT] Kirim notif ke WhatsApp via Fonnte langsung dari bot (non-blocking via RunThread)
+local FONNTE_TOKEN  = "J458dV68YKaGXJ6h3bPJ"
+local FONNTE_TARGET = "120363429381553519@g.us"
+local WAAlertLimit  = {}
+local function SendWhatsAppAlert(alasan, detail)
+    local now = NowTime()
+    if WAAlertLimit[alasan] and (now - WAAlertLimit[alasan] < 180) then return end
+    WAAlertLimit[alasan] = now
+    RunThread(function()
+        local me = GetLocal and GetLocal()
+        local botName = (me and me.name and StripColor(me.name)) or "Bot"
+        local world = (worldName ~= "" and worldName) or "?"
+        local pesan = string.format(
+            "⚠️ [%s] di %s\nAlasan: %s\nDetail: %s\nBot TIDAK dimatikan — auto-recovery aktif.",
+            botName, world, alasan, tostring(detail or "-"))
+        pcall(MakeRequest, "https://api.fonnte.com/send", "POST", {
+            ["Authorization"] = FONNTE_TOKEN,
+            ["Content-Type"]  = "application/json",
+        }, string.format('{"target":"%s","message":%q}', FONNTE_TARGET, pesan))
+    end)
+    Log("`3[WA Alert]`w " .. alasan)
+end
+
 local function inv(id)
     local count = 0
     for _, itm in pairs(GetInventory() or {}) do
@@ -748,9 +771,10 @@ local function FetchRemote()
 
     if #Mag == 0 then RecalcMag() end
     if #Mag == 0 then
-        Log("`4[SmartMag]`w Tidak ada magplant terdeteksi di world ini!")
-        Run.start = false
-        Run.status = "Tidak Ada Mag"
+        Log("`4[SmartMag]`w Tidak ada magplant terdeteksi di world ini! Kirim WA alert & menunggu...")
+        pcall(SendWhatsAppAlert, "Tidak Ada Magplant", "Bot tidak mendeteksi ada Magplant (fg=5638) di world ini. Bot standby menunggu mag dipasang.")
+        Run.status = "Tidak Ada Mag (Wait)"
+        Sleep(30000)
         return
     end
 
@@ -761,12 +785,13 @@ local function FetchRemote()
         attempt = attempt + 1
         local target = GetNextMag()
         if not target then
-            Log("`4[SmartMag]`w SEMUA MAGPLANT DI WORLD INI KOSONG!")
-            Run.start = false
-            Run.status = "Semua Mag Kosong"
+            Log("`4[SmartMag]`w SEMUA MAGPLANT DI WORLD INI KOSONG! Menunggu restock...")
+            Run.status = "Semua Mag Kosong (Wait)"
             Cheat(false)
-            -- Notifikasi webhook non-blocking via antrean
+            pcall(SendWhatsAppAlert, "Semua Magplant Kosong", "Seluruh magplant kosong atau cooldown. Bot standby menunggu restock (TIDAK dimatikan).")
             pcall(WebhookNotify, "semua_mag_kosong", "Semua mag kosong di world " .. worldName)
+            Sleep(30000)
+            MagIntel = {} -- Reset intel agar coba re-scan setelah delay
             return
         end
 
@@ -815,10 +840,12 @@ local function FetchRemote()
     end
 
     if inv(5640) == 0 then
-        Log("`4[SmartMag]`w Semua opsi magplant telah dicoba dan habis!")
-        Run.start = false
-        Run.status = "Semua Mag Kosong"
+        Log("`4[SmartMag]`w Semua opsi magplant telah dicoba dan habis! Menunggu 20 detik...")
+        Run.status = "Semua Mag Dicoba (Wait)"
         Cheat(false)
+        pcall(SendWhatsAppAlert, "Semua Opsi Mag Habis", "Semua magplant telah dicoba dan tas belum dapat remote. Bot standby retry.")
+        Sleep(20000)
+        MagIntel = {}
     end
 end
 
@@ -1529,10 +1556,12 @@ local function Step()
         JoinFail = JoinFail + 1
         LastJoinAttempt = NowTime()
         if JoinFail >= 10 then
-            StopPNB()
-            Run.status = "Gagal Join"
-            Log("`4[Critical]`w Gagal join world " .. worldName .. " setelah 10 percobaan!")
+            Log("`4[Critical]`w Gagal join world " .. worldName .. " 10x! Cooldown 60s & kirim WA alert...")
+            Run.status = "Gagal Join (Retry 60s)"
+            pcall(SendWhatsAppAlert, "Gagal Join World 10x", "Bot gagal masuk ke world " .. worldName .. " setelah 10 percobaan. Menunggu 60s lalu mencoba lagi.")
             pcall(WebhookNotify, "join_fail", "Gagal join world " .. worldName .. " 10x berturut-turut")
+            Sleep(60000)
+            JoinFail = 5 -- Kurangi counter agar lanjut coba dengan delay backoff
             return
         end
         local delay = D("Join")
@@ -1577,10 +1606,11 @@ local function Step()
     if changeRemote or inv(5640) == 0 then
         -- [17] Jika remote habis dan AutoChangeRemote mati -> Stop PNB
         if inv(5640) == 0 and not S.PNB.AutoChangeRemote then
-            Log("`4[Remote]`w Remote habis dan Auto Change Remote nonaktif!")
-            StopPNB()
-            Run.status = "Remote habis"
+            Log("`4[Remote]`w Remote habis dan Auto Change Remote nonaktif! Kirim WA alert, bot tetap jalan...")
+            Run.status = "Remote Habis (Alert)"
+            pcall(SendWhatsAppAlert, "Remote Magplant Habis", "Remote (ID 5640) habis di tas dan AutoChangeRemote nonaktif. Bot tidak bisa lanjut ambil remote — tolong isi remote atau aktifkan AutoChangeRemote.")
             pcall(WebhookNotify, "remote_habis", "Remote magplant habis di tas dan AutoChangeRemote nonaktif")
+            Sleep(60000)
             return
         end
         Run.status = "Smart Mag fetching"
@@ -1684,9 +1714,16 @@ local function Step()
                 m = false
                 Log(string.format("`4[Watchdog]`w Gems tidak naik %d menit (#%d)", tonumber(S.PNB.StuckMinutes) or 10, StuckCount))
                 if StuckCount >= 3 then
-                    StopPNB()
-                    Run.status = "Stuck Gems"
+                    Log("`4[Watchdog]`w Gems stuck 3x! Kirim WA alert & lakukan auto-recovery (TIDAK stop PNB)...")
+                    Run.status = "Stuck Recovery"
+                    pcall(SendWhatsAppAlert, "Gems Stuck (Tidak Bertambah)", string.format("Gems tidak naik selama %d menit x 3. Bot auto-recovering: re-position & re-cheat.", tonumber(S.PNB.StuckMinutes) or 10))
                     pcall(WebhookNotify, "stuck", "Gems tidak bertambah selama 3x periode stuck berturut-turut")
+                    Cheat(false)
+                    m = false
+                    StuckCount = 0
+                    StuckGems = Gems()
+                    StuckGemTime = NowTime()
+                    Sleep(D("PostMove"))
                     return
                 end
             end
@@ -1760,10 +1797,14 @@ RunThread(function()
                 ConsecErrors = ConsecErrors + 1
                 Log("`4Error: " .. tostring(err))
                 if ConsecErrors >= 5 then
-                    StopPNB()
-                    Run.status = "Error Loop"
-                    Log("`4[Critical]`w Step error 5x berturut-turut! PNB dihentikan.")
+                    Log("`4[Critical]`w Step error 5x berturut-turut! Kirim WA alert & auto-recovering (TIDAK dimatikan)...")
+                    Run.status = "Error Recovery (Wait 10s)"
+                    pcall(SendWhatsAppAlert, "Step Runtime Error 5x", "Step() mengalami runtime error beruntun: " .. tostring(err) .. ". Bot reset state & retry...")
                     pcall(WebhookNotify, "error_loop", "Step() runtime error 5x berturut-turut: " .. tostring(err))
+                    Cheat(false)
+                    m = false
+                    ConsecErrors = 0
+                    Sleep(10000)
                 else
                     Sleep(3000)
                 end
@@ -1969,9 +2010,11 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                         Log("`3[Paywall]`w Akses DICABUT PAKSA! Toggle beli paksa ON -> Membeli ulang...")
                         allowBuy = true
                     else
-                        Log("`4[Paywall]`w Akses DICABUT PAKSA oleh owner! Beli paksa OFF -> PNB dihentikan demi keamanan WL.")
-                        StopPNB()
-                        Run.status = "Akses Dicabut (Stop)"
+                        Log("`4[Paywall]`w Akses DICABUT PAKSA oleh owner! Beli paksa OFF -> Kirim WA alert...")
+                        pcall(SendWhatsAppAlert, "Akses Paywall Dicabut", "Owner mencabut akses pintu paywall dan AutoBuyPaywall nonaktif. Bot standby di depan paywall.")
+                        Run.status = "Akses Dicabut (Standby)"
+                        Cheat(false)
+                        m = false
                         return true
                     end
                 else
@@ -1979,9 +2022,11 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                         Log(string.format("`9[Paywall]`w Membeli akses paywall (%d, %d)...", tx, ty))
                         allowBuy = true
                     else
-                        Log("`4[Paywall]`w Waktu sewa habis! Auto-renew OFF -> PNB dihentikan.")
-                        StopPNB()
-                        Run.status = "Sewa Habis (Stop)"
+                        Log("`4[Paywall]`w Waktu sewa paywall habis! Auto-renew OFF -> Kirim WA alert...")
+                        pcall(SendWhatsAppAlert, "Sewa Paywall Habis", "Akses paywall habis dan AutoRenewPaywall nonaktif. Bot standby.")
+                        Run.status = "Sewa Habis (Standby)"
+                        Cheat(false)
+                        m = false
                         return true
                     end
                 end
