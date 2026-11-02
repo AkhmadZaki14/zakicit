@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T05:15:00 LRAY_AUTODETECT_FIX
+--  BUILD: 2026-11-03T05:30:00 RGB_CLEAN_UI
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -2311,6 +2311,17 @@ local C = {
     text_dim   = { 0.50, 0.50, 0.65, 1 },
 }
 
+-- RGB CHROMA DYNAMIC COLOR (Pelangi bergerak mulus)
+local function RGB(speed, offset)
+    speed = speed or 1.5
+    offset = offset or 0
+    local t = (os.clock and os.clock() or 0) * speed + offset
+    local r = math.sin(t) * 0.5 + 0.5
+    local g = math.sin(t + 2.094) * 0.5 + 0.5  -- + 120 derajat
+    local b = math.sin(t + 4.188) * 0.5 + 0.5  -- + 240 derajat
+    return { r, g, b, 1.0 }
+end
+
 local function AvailW()
     if ImGui.GetContentRegionAvailX then
         return ImGui.GetContentRegionAvailX()
@@ -2391,10 +2402,12 @@ local function CB(label, val)
     return false, val
 end
 
-local function Section(title)
-    Sp(4)
-    CText(C.neon_cyan, "  " .. title)
-    Sep(C.border)
+local function SectionRGB(title)
+    Sp(6)
+    local col = RGB(2.0, 0)
+    CText(col, "  ● " .. title)
+    Sep(col)
+    Sp(2)
 end
 
 local function Row(label, value, col)
@@ -2421,7 +2434,7 @@ local function TabFarm()
     -- Status mini
     CText(running and C.neon_green or C.neon_red,
         running and ("  " .. Run.status) or "  Idle")
-    CText(C.text_dim, "  Build: 2026-11-03 05:15 | LRAY+AUTODETECT FIX")
+    CText(RGB(1.5, 0), "  Build: 2026-11-03 05:30 | RGB CHROMA CLEAN UI")
     Sp(4)
     Sep(C.border)
 
@@ -2521,7 +2534,7 @@ local function TabMag()
         Log("`2SmartMag: Semua status kosong di-reset!")
     end
     Sp(4)
-    Section("Filter Magplant (BG)")
+    SectionRGB("Filter Magplant (BG)")
     local csb, vsb = CB("Aktifkan Filter Background##magbg", S.PNB.ScanBG)
     if csb then
         S.PNB.ScanBG = vsb
@@ -2569,29 +2582,135 @@ local function TabMag()
 end
 
 -- ─── TAB 3: SETTING ─────────────────────────────────────────
+-- ─── TAB 3: SETTING (CLEAN, MINIMALIST & RGB) ────────────────
 local function TabSetting()
-    Section("Item & Wear")
-    for _, item in ipairs(WearList) do
-        if ImGui.Selectable(item, S.PNB.WearItem == item) then
-            S.PNB.WearItem = item -- [4] Hanya ubah pilihan; Wear() dipanggil saat StartPNB
-        end
-    end
-    Sp(4)
+    local rgbCol = RGB(2.0, 0)
+    local avail = AvailW()
 
-    Section("Fitur")
+    -- ═══ 1. RENTING STATION (PALING ATAS & UTAMA) ═══
+    SectionRGB("SEWA ITEM CLOTHING (RENT STATION)")
+    local cbRent, vRent = CB("Aktifkan Auto Rent PNB##arn", S.PNB.AutoRent)
+    if cbRent then S.PNB.AutoRent = vRent end
+
+    if S.PNB.AutoRent then
+        Sp(2)
+        -- PILIHAN TARGET ITEM (HORIZONTAL GRID RINGKAS)
+        CText(C.neon_cyan, "Pilih Item Target Sewa:")
+        local targets = {
+            { "Auto", "Auto-Detect" },
+            { "LSS",  "Legendary Shard Sword" },
+            { "MRay", "Mythical Ray" },
+            { "LRay", "Legendary Ray" },
+            { "LIF",  "Legendary Infinity Fist" },
+        }
+        local curTarget = S.PNB.RentTargetItem or "Auto-Detect"
+        local btnW = (avail / #targets) - 3
+        for i, t in ipairs(targets) do
+            local isSel = (curTarget == t[2] or (t[1] == "Auto" and curTarget == "Auto-Detect"))
+            local nP = PushCols({
+                { "Button", isSel and {0.0, 0.6, 0.9, 1} or {0.12, 0.12, 0.22, 1} },
+                { "ButtonHovered", {0.2, 0.7, 1.0, 1} },
+                { "ButtonActive", C.neon_cyan },
+            })
+            if ImGui.Button(t[1] .. "##rtg" .. i, ImVec2(btnW, 30)) then
+                if curTarget ~= t[2] then
+                    S.PNB.RentTargetItem = t[2]
+                    RentEquipped = false
+                    RentClothBtn = ""
+                    Log("`2[Rent]`w Target diubah ke: " .. t[2] .. " -> Mengecek...")
+                    RunThread(function()
+                        Sleep(200)
+                        pcall(CheckRentStatus, true)
+                    end)
+                end
+            end
+            PopCols(nP)
+            if i < #targets then ImGui.SameLine() end
+        end
+        Sp(4)
+
+        -- KARTU STATUS & DURASI
+        local remRent = math.max(0, RentExpires - NowTime())
+        local rCol = remRent > 300 and C.neon_green or (remRent > 0 and C.neon_yel or C.neon_red)
+        local durText = remRent > 0 and ("⏱ Sisa: " .. FTime(remRent)) or "⏱ Sewa: HABIS / BELUM"
+
+        CText(RentEquipped and C.neon_green or C.neon_red,
+            string.format("  STATUS: %s  |  TARGET: %s",
+                RentEquipped and "[✓] TERPASANG DI BADAN" or "[!] BELUM DIPAKAI",
+                curTarget:gsub("Legendary ", "L-"):gsub("Mythical ", "M-")))
+        CText(rCol, "  " .. durText)
+        Sp(3)
+
+        -- 2 TOMBOL UTAMA BERSEBELAHAN (LEBAR 50% / 50%)
+        local halfW = (avail / 2) - 4
+        if NButton("⚡ CEK & PASANG", C.neon_cyan, halfW, 36) then
+            RunThread(function() pcall(CheckRentStatus, true) end)
+        end
+        ImGui.SameLine()
+        if NButton("🎯 WAR SEWA (SPAM)", C.neon_pink, halfW, 36) then
+            RunThread(function() pcall(DoWarRent) end)
+        end
+        Sp(2)
+
+        -- POSISI & PENGATURAN MESIN SEWA (RINGKAS 1 BARIS)
+        local rSet = S.RentX ~= 0 or S.RentY ~= 0
+        local sSet = (S.RentStandX or 0) ~= 0 or (S.RentStandY or 0) ~= 0
+        local rLbl = rSet and string.format("Mesin:(%d,%d)", S.RentX, S.RentY) or "Punch Mesin"
+        local sLbl = sSet and string.format("Stand:(%d,%d)", S.RentStandX or 0, S.RentStandY or 0) or "Set Stand Pos"
+
+        if ImGui.Button(rLbl, ImVec2(halfW, 28)) then
+            CaptureRent = true
+            Log("`9[Rent]`w Punch Renting Station sekarang untuk set posisi...")
+        end
+        ImGui.SameLine()
+        if ImGui.Button(sLbl, ImVec2(halfW, 28)) then
+            local me = GetLocal and GetLocal()
+            if me and me.pos then
+                S.RentStandX = math.floor(me.pos.x / 32)
+                S.RentStandY = math.floor(me.pos.y / 32)
+                Log(string.format("`2[Rent]`w Posisi berdiri sewa di-set ke (%d, %d)", S.RentStandX, S.RentStandY))
+            end
+        end
+        -- Input World Sewa
+        local chRw, nvRw = ImGui.InputText("World Sewa##rw", S.PNB.RentWorld, 64)
+        if chRw then S.PNB.RentWorld = tostring(nvRw):upper() end
+    end
+    Sp(6)
+
+    -- ═══ 2. ITEM BAJU FARM / PNB NORMAL (PICKAXE, DLL) ═══
+    SectionRGB("ITEM WEAR FARM (PNB)")
+    CText(C.text_dim, "Baju saat farming (Wear saat Start PNB):")
+    local curWear = S.PNB.WearItem or "Pickaxe"
+    local wearW = (avail / 4) - 3
+    for i, item in ipairs(WearList) do
+        local isSel = (curWear == item)
+        local nP = PushCols({
+            { "Button", isSel and {0.2, 0.8, 0.4, 1} or {0.12, 0.12, 0.22, 1} },
+            { "ButtonActive", C.neon_green },
+        })
+        if ImGui.Button(item .. "##wear" .. i, ImVec2(wearW, 28)) then
+            S.PNB.WearItem = item
+            Log("Wear Item: " .. item)
+        end
+        PopCols(nP)
+        if i % 4 ~= 0 and i < #WearList then ImGui.SameLine() end
+    end
+    Sp(6)
+
+    -- ═══ 3. FITUR PNB ═══
+    SectionRGB("FITUR & TOGGLE")
     local opts = {
         { "Modfly",            "Modfly" },
         { "AutoCollectGems",   "Auto Collect Gems" },
         { "AutoChangeRemote",  "Auto Ganti Remote" },
         { "AutoConsumables",   "Auto Consume" },
         { "AutoSuckBgems",     "Auto Suck Black Gems" },
-        { "BypassPaywall",     "Bypass Paywall (16308)" },
-        { "BypassWayBlock",    "Bypass One-Way (3796)" },
-        { "HideCollected",     "Hide Popup Collected" },
+        { "BypassPaywall",     "Bypass Paywall" },
+        { "BypassWayBlock",    "Bypass One-Way" },
+        { "HideCollected",     "Hide Popup Gems" },
         { "AntiLag",           "AntiLag / FC Guard" },
         { "IgnoreOther",       "Ignore Player Lain" },
-        { "EnableMonitor",     "Remote Command (Opt-in)" },
-        { "AutoPaywall",       "Auto Renew Paywall" },
+        { "AutoPaywall",       "Auto Paywall" },
     }
     for _, o in ipairs(opts) do
         local c, v = CB(o[2], S.PNB[o[1]])
@@ -2601,12 +2720,29 @@ local function TabSetting()
             UpdateBypassRules()
         end
     end
-    -- [8] Input MonitorToken di GUI
-    local chTok, nvTok = ImGui.InputText("Monitor Token##montok", S.PNB.MonitorToken or "", 128)
-    if chTok then S.PNB.MonitorToken = tostring(nvTok) end
     Sp(4)
 
-    Section("Auto Buy / Convert")
+    -- ═══ 4. DELAY & PRESET SPEED ═══
+    SectionRGB("DELAY SPEED PRESET")
+    local presets = {{"⚡ FAST", 60}, {"● NORMAL", 100}, {"🛡 SAFE", 200}, {"🐢 PELAN", 300}}
+    local pW = (avail / #presets) - 3
+    for i, pr in ipairs(presets) do
+        local isAct = (S.Delay.Scale == pr[2])
+        local nP = PushCols({
+            { "Button", isAct and {0.9, 0.6, 0.0, 1} or {0.12, 0.12, 0.22, 1} },
+            { "ButtonActive", C.neon_yel },
+        })
+        if ImGui.Button(pr[1], ImVec2(pW, 30)) then
+            S.Delay.Scale = pr[2]
+            Log("Delay Scale di-set ke: " .. pr[1])
+        end
+        PopCols(nP)
+        if i < #presets then ImGui.SameLine() end
+    end
+    Sp(4)
+
+    -- ═══ 5. AUTO CONVERT / TELEPHONE ═══
+    SectionRGB("CONVERT GEMS & TELEPHONE")
     local conv = {
         { "AutoBuyWL",    "Auto Buy WL" },
         { "ConvertDLBGL", "Convert Gems -> DL -> BGL" },
@@ -2616,183 +2752,22 @@ local function TabSetting()
         local c, v = CB(o[2], S.PNB[o[1]])
         if c then S.PNB[o[1]] = v end
     end
-    local cg, mg = ImGui.InputInt("Max Gems (convert)", S.PNB.MaxGems)
-    if cg then S.PNB.MaxGems = math.max(0, mg) end
-    local ctx, tx = ImGui.InputInt("Tel X", S.TelX); if ctx then S.TelX = tx end
-    local cty, ty = ImGui.InputInt("Tel Y", S.TelY); if cty then S.TelY = ty end
-    if NButton("Auto Cari Telephone", C.neon_cyan, -1, 32) then AutoFindTel() end
-    -- [11] Tombol Set Tel di posisi saya & Punch Tile Tel
-    if ImGui.Button("Set Tel di posisi saya", ImVec2(-1, 28)) then
-        local me = GetLocal and GetLocal()
-        if me and me.pos then
-            S.TelX = math.floor(me.pos.x / 32)
-            S.TelY = math.floor(me.pos.y / 32)
-            Log(string.format("`2[Tel]`w Tel Pos di-set ke player (%d, %d)", S.TelX, S.TelY))
-        end
-    end
     local telSet = S.TelX ~= 0 or S.TelY ~= 0
-    if NButton(telSet and string.format("[OK] Tel: (%d, %d)", S.TelX, S.TelY) or "[!] Punch Tile Tel untuk Set", telSet and C.neon_cyan or C.neon_red, -1, 30) then
-        CaptureTel = true
-        Log("`9[Tel]`w Punch tile telephone untuk set posisi...")
+    if NButton(telSet and string.format("[OK] Tel: (%d, %d)", S.TelX, S.TelY) or "Auto Cari Telephone", C.neon_cyan, -1, 30) then
+        AutoFindTel()
     end
-    if S.TelX ~= 0 then
-        CText(C.text_dim, string.format("  Tel pos: (%d, %d)", S.TelX, S.TelY))
-        if ImGui.Button("Reset Tel Pos", ImVec2(-1, 26)) then S.TelX = 0; S.TelY = 0 end
-    end
-    Sp(4)
-
-    Section("Delay")
-    local cbc, bcv = ImGui.InputInt("Delay Buy Cheat (menit)", S.DelayBuyCheat)
-    if cbc then S.DelayBuyCheat = math.max(1, bcv) end
-    local cp, vp = ImGui.InputInt("Delay per Tile Jalan (ms)", S.Delay.PathStep)
-    if cp then S.Delay.PathStep = math.max(50, math.min(5000, vp)) end
-    local presets = {{"Fast",60},{"Normal",100},{"Safe",200},{"Pelan",300}}
-    for i, pr in ipairs(presets) do
-        if ImGui.Button(pr[1], ImVec2(AvailW()/4 - 4, 30)) then
-            S.Delay.Scale = pr[2]
-        end
-        if i < #presets then ImGui.SameLine() end
-    end
-
-    Section("Paywall")
-    if S.PNB.AutoPaywall then
-        -- Toggle 1: Auto Renew (timer sebelum habis)
-        local cbRen, vRen = CB("Auto Renew (perpanjang sebelum habis)##arw", S.PNB.AutoRenewPaywall)
-        if cbRen then S.PNB.AutoRenewPaywall = vRen end
-        -- Toggle 2: Auto Beli Paksa (kalau dicabut owner)
-        local cbBuy, vBuy = CB("Auto Beli Paksa (kalau dicabut owner)##abp", S.PNB.AutoBuyPaywall)
-        if cbBuy then S.PNB.AutoBuyPaywall = vBuy end
-        if not S.PNB.AutoBuyPaywall then
-            CText(C.neon_yel, "  [!] Jika dicabut paksa: PNB stop (WL aman).")
-        else
-            CText(C.neon_cyan, "  [!] Jika dicabut paksa: beli ulang otomatis.")
-        end
-        Sp(3)
-        -- Tombol capture via punch tile
-        local pwSet = S.PaywallX ~= 0 or S.PaywallY ~= 0
-        if NButton(pwSet and string.format("[OK] Paywall: (%d, %d)", S.PaywallX, S.PaywallY) or "[!] Punch Tile Paywall untuk Set", pwSet and C.neon_cyan or C.neon_red, -1, 34) then
-            CapturePaywall = true
-            Log("`9[Paywall]`w Punch tile paywall sekarang untuk set posisi...")
-        end
-        if pwSet then
-            local rem = math.max(0, PaywallExpires - NowTime())
-            local expColor = rem > 300 and C.neon_green or (rem > 0 and C.neon_yel or C.neon_red)
-            local expTxt = rem > 0 and ("Sisa: " .. FTime(rem)) or "Belum diketahui / Habis"
-            CText(expColor, "  " .. expTxt)
-            if NButton("Cek Paywall Sekarang", C.neon_cyan, -1, 30) then
-                RunThread(function()
-                    pcall(CheckPaywall, true)
-                end)
-            end
-            if ImGui.Button("Reset Pos Paywall", ImVec2(-1, 26)) then
-                S.PaywallX = 0; S.PaywallY = 0; PaywallExpires = 0
-            end
-        end
-    else
-        CText(C.text_dim, "  Aktifkan 'Auto Renew Paywall' di Fitur untuk setting ini.")
-    end
-
-    Section("Renting Station / Mray")
-    local cbRent, vRent = CB("Aktifkan Auto Rent / Sewa Mray##arn", S.PNB.AutoRent)
-    if cbRent then S.PNB.AutoRent = vRent end
-
-    if S.PNB.AutoRent then
-        local chRw, nvRw = ImGui.InputText("World Sewa##rw", S.PNB.RentWorld, 64)
-        if chRw then S.PNB.RentWorld = tostring(nvRw):upper() end
-        if ImGui.Button("Pakai World Saat Ini##curw_rent", ImVec2(-1, 28)) then
-            local cw = WorldNow()
-            if cw then S.PNB.RentWorld = cw; Log("World Sewa: " .. cw) end
-        end
-
-        local rSet = S.RentX ~= 0 or S.RentY ~= 0
-        if NButton(rSet and string.format("[OK] Rent Station: (%d, %d)", S.RentX, S.RentY) or "[!] Punch Renting Station untuk Set", rSet and C.neon_green or C.neon_red, -1, 34) then
-            CaptureRent = true
-            Log("`9[Rent]`w Punch Renting Station sekarang untuk set posisi...")
-        end
-
-        -- Posisi berdiri tepat (presisi 0 toleransi saat war sewa)
-        local sSet = (S.RentStandX or 0) ~= 0 or (S.RentStandY or 0) ~= 0
-        local sLabel = sSet
-            and string.format("[OK] Berdiri di: (%d, %d)", S.RentStandX or 0, S.RentStandY or 0)
-            or "[!] Set Posisi Berdiri Sewa (wajib tepat!)"
-        if NButton(sLabel, sSet and C.neon_cyan or C.neon_yel, -1, 30) then
-            local me = GetLocal and GetLocal()
-            if me and me.pos then
-                S.RentStandX = math.floor(me.pos.x / 32)
-                S.RentStandY = math.floor(me.pos.y / 32)
-                Log(string.format("`2[Rent]`w Posisi berdiri sewa di-set ke (%d, %d)", S.RentStandX, S.RentStandY))
-            end
-        end
-        if sSet then
-            CText(C.text_dim, string.format("  Berdiri persis di (%d, %d) saat war sewa.", S.RentStandX, S.RentStandY))
-            if ImGui.Button("Reset Posisi Berdiri", ImVec2(-1, 24)) then
-                S.RentStandX = 0; S.RentStandY = 0
-            end
-        else
-            CText(C.neon_yel, "  Klik tombol di atas saat berdiri persis di depan mesin!")
-        end
-        Sp(3)
-
-        local remRent = math.max(0, RentExpires - NowTime())
-        local rCol = remRent > 300 and C.neon_green or (remRent > 0 and C.neon_yel or C.neon_red)
-        local rTxt = remRent > 0 and ("Sisa Durasi Sewa: " .. FTime(remRent)) or "Sewa Habis / Belum Disewa"
-        CText(rCol, "  " .. rTxt)
-        CText(RentEquipped and C.neon_green or C.neon_red, "  Status di Badan: " .. (RentEquipped and "TERPASANG [OK]" or "BELUM DIPAKAI [!]"))
-        Sp(3)
-
-        -- Pilihan target item sewa
-        CText(C.neon_cyan, "Target Item Sewa (untuk deteksi status):")
-        local rentTargets = { "Auto-Detect", "Legendary Shard Sword", "Mythical Ray", "Legendary Ray", "Legendary Infinity Fist" }
-        for _, itm in ipairs(rentTargets) do
-            if ImGui.Selectable(itm .. "##rtg", (S.PNB.RentTargetItem or "Auto-Detect") == itm) then
-                if S.PNB.RentTargetItem ~= itm then
-                    S.PNB.RentTargetItem = itm
-                    RentEquipped = false   -- RESET: item target baru belum tentu terpasang!
-                    RentClothBtn = ""
-                    Log("`2[Rent]`w Target item sewa diubah ke: " .. itm .. " -> Mengecek & memasang...")
-                    RunThread(function()
-                        Sleep(200)
-                        pcall(CheckRentStatus, true)
-                    end)
-                end
-            end
-        end
-        Sp(4)
-
-        if NButton("Cek & Pasang Sewa Sekarang", C.neon_cyan, -1, 32) then
-            RunThread(function()
-                pcall(CheckRentStatus, true)
-            end)
-        end
-        if RentClothBtn ~= "" then
-            if NButton("PAKSA PASANG ITEM (" .. RentClothBtn .. ")", C.neon_yel, -1, 32) then
-                RunThread(function() pcall(SilentEquipRent, true) end)
-            end
-        else
-            if NButton("[!] Cek Dulu lalu Pasang (cloth belum diketahui)", C.neon_yel, -1, 32) then
-                RunThread(function() pcall(CheckRentStatus, true) end)
-            end
-        end
-        if NButton("WAR SEWA SEKARANG (Spam)", C.neon_pink, -1, 36) then
-            RunThread(function()
-                pcall(DoWarRent)
-            end)
-        end
-        if ImGui.Button("Reset Pos Renting Station", ImVec2(-1, 26)) then
-            S.RentX = 0; S.RentY = 0; RentExpires = 0
-        end
-    end
+    Sp(6)
 end
 
 -- ─── TAB 4: CONFIG ──────────────────────────────────────────
 local function TabConfig()
-    Section("Default Profile")
+    SectionRGB("Default Profile")
     if NButton("SAVE DEFAULT", C.neon_green, -1, 38) then SaveSettings() end
     Sp(2)
     if NButton("LOAD DEFAULT", {0.00,0.55,1.00,1}, -1, 32) then LoadSettings() end
     Sp(4)
 
-    Section("User Profiles (1 - 3)")
+    SectionRGB("User Profiles (1 - 3)")
     -- Baris SAVE USER 1-3
     CText(C.neon_cyan, "  Simpan ke Slot:")
     local wBtn = AvailW() / 3 - 4
@@ -2814,7 +2789,7 @@ local function TabConfig()
 
     if savePathUsed ~= "" then CText(C.text_dim, "  Last File: " .. savePathUsed) end
     Sp(6)
-    Section("Log")
+    SectionRGB("Log")
     if ImGui.Button("Clear Log", ImVec2(-1, 28)) then LogBuf = {} end
     Sp(2)
     local from = math.max(1, #LogBuf - 18)
@@ -2822,8 +2797,14 @@ local function TabConfig()
 end
 
 local function TabAbout()
-    Section("ZAKICIT PNB v2")
-    ImGui.Text("Web Monitor: https://gt-pi-ten.vercel.app")
+    SectionRGB("ZAKICIT PNB v2 — THE CONTINENTAL")
+    local col = RGB(2.5, 0)
+    CText(col, "  ● Multi-Slot Profiles: Slot 1 - 3")
+    CText(col, "  ● Smart Magplant Auto-Refill & Empty Detect")
+    CText(col, "  ● Auto Renting Station (LSS / LRay / MRay)")
+    CText(col, "  ● Anti-Disconnect & Bot Supervisor Guard")
+    Sp(4)
+    CText(C.neon_cyan, "Web Monitor: https://gt-pi-ten.vercel.app")
 end
 
 local sizeSet = false
@@ -2836,8 +2817,8 @@ AddHook("OnDraw", "ZAKICIT_DRAW", function()
 
     local n = PushCols({
         { "WindowBg",      { 0.05, 0.05, 0.13, 0.98 } },
-        { "TitleBg",       { 0.08, 0.05, 0.22, 1 } },
-        { "TitleBgActive", { 0.10, 0.00, 0.40, 1 } },
+        { "TitleBg",       RGB(1.5, 0) },
+        { "TitleBgActive", RGB(2.0, 1) },
         { "FrameBg",       { 0.10, 0.10, 0.20, 1 } },
         { "FrameBgHovered",{ 0.15, 0.14, 0.30, 1 } },
         { "FrameBgActive", { 0.20, 0.18, 0.40, 1 } },
@@ -2848,9 +2829,9 @@ AddHook("OnDraw", "ZAKICIT_DRAW", function()
         { "Header",        { 0.15, 0.12, 0.38, 0.9 } },
         { "HeaderHovered", { 0.22, 0.20, 0.55, 1 } },
         { "Tab",           { 0.10, 0.08, 0.22, 1 } },
-        { "TabHovered",    { 0.20, 0.18, 0.50, 1 } },
-        { "TabActive",     { 0.18, 0.00, 0.58, 1 } },
-        { "Separator",     { 0.20, 0.18, 0.45, 1 } },
+        { "TabHovered",    RGB(2.0, 2) },
+        { "TabActive",     RGB(1.5, 3) },
+        { "Separator",     RGB(1.0, 0) },
         { "PlotHistogram", C.neon_cyan },
     })
     if ImGui.Begin("ZAKICIT PNB v2") then
