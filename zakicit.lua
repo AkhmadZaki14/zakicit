@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T03:50:00 GACOR_DELAYED_CLICK
+--  BUILD: 2026-11-03T04:00:00 POPUP_UNBOUND
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -1985,8 +1985,10 @@ AddHook("OnVariant", "PNB_VAR", function(var)
         end
 
         -- RENTING 1: Intercept Self-Wrench Popup -> deteksi RentEquipped dari Active effects: lalu buka clothlease
-        -- Hanya diproses jika BotTriggeredWrench (bot yang wrench, bukan user manual)
-        if BotTriggeredWrench and (a:find("end_dialog|popup", 1, true) or a:find("clothlease", 1, true)) and a:find("add_button|clothlease|", 1, true) then
+        -- Tombol clothlease HANYA ada di popup profil diri sendiri jika punya sewaan aktif.
+        -- Kita TIDAK batasi dengan BotTriggeredWrench agar tidak gagal akibat timing thread.
+        local isSelfPopupWithRent = (a:find("end_dialog|popup", 1, true) or a:find("add_player_info", 1, true)) and a:find("clothlease", 1, true)
+        if isSelfPopupWithRent then
             local clean = StripColor(a)
             local target = S.PNB.RentTargetItem or "Auto-Detect"
             -- Ambil bagian Active effects: saja
@@ -2388,7 +2390,7 @@ local function TabFarm()
     -- Status mini
     CText(running and C.neon_green or C.neon_red,
         running and ("  " .. Run.status) or "  Idle")
-    CText(C.text_dim, "  Build: 2026-11-03 03:50 | Branch: main | GACOR DELAYED")
+    CText(C.text_dim, "  Build: 2026-11-03 04:00 | NO WRENCHFLAG")
     Sp(4)
     Sep(C.border)
 
