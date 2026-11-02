@@ -19,21 +19,36 @@ app.use((_, res, next) => {
 app.options('*', (_, res) => res.sendStatus(204));
 
 // =============================================================
-//  PERSISTENCE — Vercel Blob (private) dengan CAS, fallback /tmp
-//  Atomic per userId: optimistic concurrency (ifMatch) + merge
-//  last-write-wins by lastSeen, jadi instance berbeda tidak
-// =============================================================
-//  PERSISTENCE — Upstash Redis (REST) + Fallback /tmp
-//  Multi-container serverless sinkron instan via Redis key-value
+//  PERSISTENCE — priority: Vercel Blob → Upstash Redis → /tmp
+//  Vercel Blob: cross-container sinkron via shared object store
+//  Redis: fallback jika ada UPSTASH_REDIS_REST_URL
+//  /tmp: fallback lokal per-lambda (tidak cross-container!)
 // =============================================================
 const TMP_FILE = '/tmp/gt_fleet_state.json';
-const READ_CACHE_MS = 1500;
-const PERSIST_MIN_MS = 250;
+const READ_CACHE_MS = 2000;
+const PERSIST_MIN_MS = 500;
 
+// --- Vercel Blob ---
+let blobModule = null;
+const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN;
+const BLOB_STATE_PATH = 'gt-fleet/state.json';
+const BLOB_SETTINGS_PATH = 'gt-fleet/settings.json';
+let BLOB_READY = false;
+let blobStateUrl = null;
+let blobSettingsUrl = null;
+if (BLOB_TOKEN) {
+  try {
+    blobModule = require('@vercel/blob');
+    BLOB_READY = true;
+    console.log('[BLOB] Vercel Blob siap, persistence antar-container aktif.');
+  } catch (_) { BLOB_READY = false; }
+}
+
+// --- Upstash Redis (fallback) ---
 let redis = null;
 const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
-if (REDIS_URL && REDIS_TOKEN) {
+if (!BLOB_READY && REDIS_URL && REDIS_TOKEN) {
   try {
     const { Redis } = require('@upstash/redis');
     redis = new Redis({ url: REDIS_URL, token: REDIS_TOKEN });
@@ -144,6 +159,26 @@ async function refreshState(force) {
   if (!force && now - lastRead < READ_CACHE_MS) return;
   lastRead = now;
 
+  // 1. Coba Vercel Blob
+  if (BLOB_READY && blobModule) {
+    try {
+      if (!blobStateUrl) {
+        const { blobs } = await blobModule.list({ prefix: BLOB_STATE_PATH, limit: 1 });
+        if (blobs && blobs.length > 0) blobStateUrl = blobs[0].url;
+      }
+      if (blobStateUrl) {
+        const res = await fetch(blobStateUrl, { cache: 'no-store' });
+        if (res.ok) {
+          const remoteState = await res.json();
+          adoptRemote(remoteState);
+        }
+      }
+    } catch (err) {
+      console.error('[BLOB_READ_ERR]', err.message);
+    }
+  }
+
+  // 2. Coba Redis (jika tidak ada Blob atau Blob kosong)
   if (redis) {
     try {
       const [remoteState, remoteSettings] = await Promise.all([
@@ -158,7 +193,7 @@ async function refreshState(force) {
     }
   }
 
-  // Fallback lokal /tmp
+  // 3. Fallback lokal /tmp
   try {
     if (fs.existsSync(TMP_FILE)) {
       const p = JSON.parse(fs.readFileSync(TMP_FILE, 'utf8'));
@@ -169,6 +204,22 @@ async function refreshState(force) {
 }
 
 async function loadSettings() {
+  if (BLOB_READY && blobModule) {
+    try {
+      if (!blobSettingsUrl) {
+        const { blobs } = await blobModule.list({ prefix: BLOB_SETTINGS_PATH, limit: 1 });
+        if (blobs && blobs.length > 0) blobSettingsUrl = blobs[0].url;
+      }
+      if (blobSettingsUrl) {
+        const res = await fetch(blobSettingsUrl, { cache: 'no-store' });
+        if (res.ok) {
+          const cfg = await res.json();
+          if (cfg) settings = { ...DEFAULT_SETTINGS, ...cfg };
+          return;
+        }
+      }
+    } catch (_) {}
+  }
   if (redis) {
     try {
       const cfg = await redis.get(REDIS_SETTINGS_KEY);
@@ -190,16 +241,30 @@ async function persistState() {
     savedAt: now
   };
 
+  // 1. Simpan ke Vercel Blob (cross-container serverless)
+  if (BLOB_READY && blobModule) {
+    try {
+      const blob = await blobModule.put(BLOB_STATE_PATH, JSON.stringify(payload), {
+        access: 'public',
+        addRandomSuffix: false,
+        contentType: 'application/json',
+      });
+      blobStateUrl = blob.url;
+    } catch (err) {
+      console.error('[BLOB_WRITE_ERR]', err.message);
+    }
+  }
+
+  // 2. Simpan ke Redis (jika aktif)
   if (redis) {
     try {
       await redis.set(REDIS_STATE_KEY, JSON.stringify(payload));
-      return true;
     } catch (err) {
       console.error('[REDIS_WRITE_ERR]', err.message);
     }
   }
 
-  // Fallback /tmp
+  // 3. Simpan ke /tmp lokal
   try {
     fs.writeFileSync(TMP_FILE, JSON.stringify({ ...payload, settings }));
   } catch (_) {}
@@ -207,6 +272,16 @@ async function persistState() {
 }
 
 async function saveSettings() {
+  if (BLOB_READY && blobModule) {
+    try {
+      const blob = await blobModule.put(BLOB_SETTINGS_PATH, JSON.stringify(settings), {
+        access: 'public',
+        addRandomSuffix: false,
+        contentType: 'application/json',
+      });
+      blobSettingsUrl = blob.url;
+    } catch (_) {}
+  }
   if (redis) {
     try {
       await redis.set(REDIS_SETTINGS_KEY, JSON.stringify(settings));
