@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T07:35:00 SAFE_PATH_FIX
+--  BUILD: 2026-11-03T07:45:00 SAFE_CHECKPATH_OK
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -346,18 +346,27 @@ local function IsTileWalkable(x, y)
     if not w then return false end
     local mw = w.width or 100
     local mh = w.height or 60
-    if x < 0 or x >= mw or y < 0 or y >= mh then return false end -- [12] bounds check
+    if x < 0 or x >= mw or y < 0 or y >= mh then return false end
+
     local t = GetTile(x, y)
     if not t then return false end
+
     local id = t.fg or 0
-    if id == 0 then return true end  -- VERIFY tile udara dengan Modfly
-    if ALLOWED_BLOCKS[id] then return true end
     if BLOCKED_BLOCKS[id] then return false end
-    if t.flags and t.flags.locked then return false end
+
+    -- Gunakan CheckPath bawaan C++ Bothax sebagai penentu utama
     if CheckPath then
-        local ok, res = pcall(CheckPath, x, y)
-        if ok then return res == true end
+        local ok, walkable = pcall(CheckPath, x, y)
+        if ok then return walkable == true end
     end
+
+    -- Validasi collidable bawaan struct Tile Bothax
+    if t.collidable == true and not ALLOWED_BLOCKS[id] then
+        return false
+    end
+
+    if t.flags and t.flags.locked then return false end
+    if id == 0 or ALLOWED_BLOCKS[id] then return true end
     return false
 end
 
@@ -2804,7 +2813,7 @@ AddHook("OnDraw", "ZAKICIT_DRAW", function()
         { "Text",           T.text },
     })
 
-    if ImGui.Begin("ZAKICIT PNB v2 [07:35]") then
+    if ImGui.Begin("ZAKICIT PNB v2 [07:45]") then
         if ImGui.BeginTabBar("ZakiTabs") then
             if ImGui.BeginTabItem("Farm")    then Sp(2); TabFarm();    ImGui.EndTabItem() end
             if ImGui.BeginTabItem("Mag")     then Sp(2); TabMag();     ImGui.EndTabItem() end
@@ -2833,4 +2842,4 @@ do
     end
 end
 LoadSettings()
-Log("`2ZAKICIT PNB v2 [07:35] siap. Buka menu.")
+Log("`2ZAKICIT PNB v2 [07:45] siap. Buka menu.")
