@@ -2373,6 +2373,7 @@ local function TabFarm()
     -- Status mini
     CText(running and C.neon_green or C.neon_red,
         running and ("  " .. Run.status) or "  Idle")
+    CText(C.text_dim, "  Build: 2026-11-03 03:00 | Branch: main | Rent Guard AKTIF")
     Sp(4)
     Sep(C.border)
 
