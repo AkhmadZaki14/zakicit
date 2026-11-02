@@ -1,38 +1,39 @@
 -- ============================================================
---  ZAKICIT LOADER v3 (In-Memory Execution, Anti-FC & Anti-Storage Bug)
+--  ZAKICIT LOADER v4 (jsDelivr — auto-purge, no CDN cache issue)
 -- ============================================================
 
 local function RunLoader()
-    LogToConsole("`2[Loader] Menghubungi GitHub...")
+    LogToConsole("`2[Loader] Mengambil script dari jsDelivr...")
 
-    -- 1. Ambil Commit Hash terbaru (User-Agent header agar tidak 403)
-    local hash = nil
-    local headers = { ["User-Agent"] = "BothaxClient/1.0" }
-    local apiRes = MakeRequest("https://api.github.com/repos/AkhmadZaki14/zakicit/commits/main", "GET", headers)
-    if apiRes and apiRes.content then
-        local sha = apiRes.content:match('"sha"%s*:%s*"([%x]+)"')
-        if sha then hash = sha:sub(1, 7) end
-    end
+    -- jsDelivr: bisa di-purge, tidak ada Fastly cache lock seperti raw.githubusercontent.com
+    -- ?t= timestamp agar tidak kena cache browser/proxy lokal
+    local url = "https://cdn.jsdelivr.net/gh/AkhmadZaki14/zakicit@main/zakicit.lua?t=" .. tostring(os.time())
 
-    -- 2. Build URL (pakai hash bypass CDN, fallback ke main)
-    local url
-    if hash then
-        url = "https://raw.githubusercontent.com/AkhmadZaki14/zakicit/" .. hash .. "/zakicit.lua"
-        LogToConsole("`2[Loader] Commit SHA: " .. hash)
-    else
-        url = "https://raw.githubusercontent.com/AkhmadZaki14/zakicit/main/zakicit.lua?t=" .. tostring(os.time())
-        LogToConsole("`3[Loader] Fallback ke main/")
-    end
-
-    -- 3. Download script ke RAM
     local res = MakeRequest(url, "GET")
     if not res or not res.content or #res.content < 1000 then
-        LogToConsole("`4[Loader] Gagal download script! Size: " .. tostring(res and res.content and #res.content or 0))
+        -- Fallback: raw.githubusercontent.com pakai commit hash
+        LogToConsole("`3[Loader] jsDelivr gagal, fallback ke GitHub raw...")
+        local headers = { ["User-Agent"] = "BothaxClient/1.0" }
+        local apiRes = MakeRequest("https://api.github.com/repos/AkhmadZaki14/zakicit/commits/main", "GET", headers)
+        local hash = nil
+        if apiRes and apiRes.content then
+            local sha = apiRes.content:match('"sha"%s*:%s*"([%x]+)"')
+            if sha then hash = sha:sub(1, 7) end
+        end
+        local rawUrl = hash
+            and ("https://raw.githubusercontent.com/AkhmadZaki14/zakicit/" .. hash .. "/zakicit.lua")
+            or  ("https://raw.githubusercontent.com/AkhmadZaki14/zakicit/main/zakicit.lua")
+        LogToConsole("`3[Loader] Fallback URL: " .. rawUrl)
+        res = MakeRequest(rawUrl, "GET")
+    end
+
+    if not res or not res.content or #res.content < 1000 then
+        LogToConsole("`4[Loader] GAGAL total! Size: " .. tostring(res and res.content and #res.content or 0))
         return
     end
-    LogToConsole("`2[Loader] Download sukses (" .. #res.content .. " bytes), menjalankan script...")
 
-    -- 4. Eksekusi langsung di memori RAM (tanpa sentuh storage / tanpa dofile agar tidak crash permission)
+    LogToConsole("`2[Loader] Download sukses (" .. #res.content .. " bytes), menjalankan...")
+
     local fn, err = nil, nil
     if loadstring then
         fn, err = loadstring(res.content)
@@ -41,19 +42,18 @@ local function RunLoader()
     end
 
     if not fn then
-        LogToConsole("`4[Loader] Error kompilasi script: " .. tostring(err))
+        LogToConsole("`4[Loader] Syntax error: " .. tostring(err))
         return
     end
 
     local ok, execErr = pcall(fn)
     if not ok then
-        LogToConsole("`4[Loader] Runtime error saat eksekusi: " .. tostring(execErr))
+        LogToConsole("`4[Loader] Runtime error: " .. tostring(execErr))
     else
-        LogToConsole("`2[Loader] ZAKICIT BERHASIL DIJALANKAN 100%!")
+        LogToConsole("`2[Loader] ZAKICIT BERHASIL DIJALANKAN!")
     end
 end
 
--- Jalankan di dalam RunThread agar tidak membekukan main thread (Anti-ANR / Anti-Freeze)
 if RunThread then
     RunThread(RunLoader)
 else
