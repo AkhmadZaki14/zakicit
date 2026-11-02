@@ -2695,9 +2695,11 @@ local function TabSetting()
         end
         if RentClothBtn ~= "" then
             if NButton("PAKSA PASANG ITEM (" .. RentClothBtn .. ")", C.neon_yel, -1, 32) then
-                RunThread(function()
-                    pcall(SilentEquipRent, true)
-                end)
+                RunThread(function() pcall(SilentEquipRent, true) end)
+            end
+        else
+            if NButton("[!] Cek Dulu lalu Pasang (cloth belum diketahui)", C.neon_yel, -1, 32) then
+                RunThread(function() pcall(CheckRentStatus, true) end)
             end
         end
         if NButton("WAR SEWA SEKARANG (Spam)", C.neon_pink, -1, 36) then
