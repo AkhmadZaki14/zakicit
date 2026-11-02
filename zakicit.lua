@@ -2327,22 +2327,8 @@ local function PopCols(n)
 end
 
 local function PushVars()
-    if not (ImGui.PushStyleVar and ImGui.PopStyleVar and ImVec2) then return 0 end
-    local enum = ImGuiStyleVar or ImGuiStyleVar_
-    if not enum then return 0 end
-    local list = {
-        { "WindowRounding", 10 }, { "ChildRounding", 8 }, { "FrameRounding", 6 },
-        { "GrabRounding", 6 },    { "TabRounding", 6 },
-        { "WindowPadding", ImVec2(14, 12) },
-        { "FramePadding",  ImVec2(10, 6) },
-        { "ItemSpacing",   ImVec2(8, 8) },
-    }
-    local n = 0
-    for _, e in ipairs(list) do
-        local id = enum[e[1]]
-        if id ~= nil and pcall(ImGui.PushStyleVar, id, e[2]) then n = n + 1 end
-    end
-    return n
+    -- Nonaktifkan PushVars sementara agar tidak memicu stack crash di Bothax mobile
+    return 0
 end
 
 local function PopVars(n)
@@ -2407,17 +2393,16 @@ end
 
 local cardStack = {}
 local function Card(id, h, title)
-    local ok = false
-    if ImGui.BeginChild then
-        ok = pcall(ImGui.BeginChild, id, ImVec2(-1, h), true)
+    -- Bothax mobile sering crash di BeginChild, pakai separator & title sebagai fallback aman
+    if title then
+        Sp(3)
+        CText(T.accent, "── " .. title .. " " .. string.rep("─", 20))
+        Sp(1)
     end
-    cardStack[#cardStack+1] = ok
-    if ok and title then CText(T.accent, title); Sp(2) end
 end
 
 local function EndCard()
-    local ok = table.remove(cardStack)
-    if ok then pcall(ImGui.EndChild) end
+    Sp(2)
 end
 
 local function Group(title, defaultOpen)
@@ -2823,24 +2808,16 @@ AddHook("OnDraw", "ZAKICIT_DRAW", function()
     local nc = PushCols({
         { "WindowBg",       { 0.07, 0.07, 0.10, 0.98 } },
         { "ChildBg",        T.card },
-        { "TitleBg",        { 0.07, 0.07, 0.10, 1 } },
         { "TitleBgActive",  { 0.10, 0.11, 0.18, 1 } },
         { "FrameBg",        T.field },
-        { "FrameBgHovered", Dim(T.field, 1.3) },
-        { "FrameBgActive",  Dim(T.field, 1.6) },
         { "CheckMark",      T.accent },
-        { "SliderGrab",     T.accent },
         { "Button",         T.btn },
         { "ButtonHovered",  Dim(T.btn, 1.4) },
         { "ButtonActive",   Dim(T.btn, 1.8) },
         { "Header",         Dim(T.accent, 0.45) },
         { "HeaderHovered",  Dim(T.accent, 0.65) },
-        { "HeaderActive",   Dim(T.accent, 0.85) },
         { "Tab",            T.card },
-        { "TabHovered",     Dim(T.accent, 0.7) },
         { "TabActive",      Dim(T.accent, 0.55) },
-        { "Separator",      T.line },
-        { "Border",         T.line },
         { "Text",           T.text },
     })
 
