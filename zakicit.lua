@@ -1074,14 +1074,11 @@ end
 -- Fungsi silent untuk langsung pasang item sewa tanpa self-wrench
 local function SilentEquipRent(force)
     if RentClothBtn == "" then
-        -- Jika belum tahu tombol cloth-nya, panggil CheckRentStatus dulu
         CheckRentStatus(true)
         return
     end
     if not force and RentEquipped then return end -- SUDAH TERPASANG, JANGAN SENTUH!
-    local now = NowTime()
-    if not force and now - RentLastToggle < 5 then return end -- cooldown 5 detik
-    RentLastToggle = now
+    RentLastToggle = NowTime()
     Log("`9[Rent]`w Mengirim paket pasang item sewa: " .. RentClothBtn)
     SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. RentClothBtn .. "\n")
     RentEquipped = true
@@ -2038,15 +2035,12 @@ AddHook("OnVariant", "PNB_VAR", function(var)
 
                 local now = NowTime()
                 if RentEquipped then
-                    -- Item sudah terpasang, DILARANG KLIK!
                     Log("`2[Rent]`w Item sudah terpasang di badan. Tombol TIDAK diklik agar tidak copot!")
-                elseif now - RentLastToggle > 5 then
+                else
                     RentLastToggle = now
                     Log(string.format("`9[Rent]`w Memasang item %s (tombol: %s)...", idName, btn))
                     SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btn .. "\n")
-                    RentEquipped = true -- optimistik setelah pasang
-                else
-                    Log("`3[Rent]`w Cooldown pasang aktif (" .. tostring(5 - (now - RentLastToggle)) .. "s lagi).")
+                    RentEquipped = true
                 end
             elseif btn then
                 RentClothBtn = btn
