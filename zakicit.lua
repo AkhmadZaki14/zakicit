@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-03T02:55:00 CACHE_BUST_MUTLAK_RENT
+--  BUILD: 2026-11-03T03:15:00 CACHE_BUST_OPTIMISTIC_RENT
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -1686,6 +1686,7 @@ local function Step()
             Run.status = "WAJIB PASANG Item Sewa!"
             Log("`4[RentGuard]`w DILARANG FARM! Item sewa belum terpasang (sisa " .. FTime(RentExpires - NowTime()) .. "). Memasang sekarang...")
             CheckRentStatus(true)
+            Sleep(5000) -- Beri waktu 5 detik agar respons server / mod added sempat diproses hook!
         else
             Run.status = "WAJIB SEWA Dulu!"
             Log("`4[RentGuard]`w DILARANG FARM! Sewa habis/belum ada. Menuju world sewa...")
@@ -1694,8 +1695,8 @@ local function Step()
             else
                 Log("`4[RentGuard]`w Posisi Renting Station belum di-set! Bot standby...")
             end
+            Sleep(3000)
         end
-        Sleep(3000)
         return
     end
 
@@ -2045,6 +2046,8 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             else
                 Log(string.format("`4[Rent]`w Item BELUM TERPASANG! Mengirim klik pasang (%s)...", btnName))
                 SendPacket(2, "action|dialog_return\ndialog_name|clothlease\nbuttonClicked|" .. btnName .. "\n")
+                RentEquipped = true -- OPTIMISTIK: anggap terpasang setelah klik, server akan konfirmasi via mod added
+                Log("`2[Rent]`w Optimistik: RentEquipped=true. Menunggu konfirmasi server (mod added)...")
             end
             BotTriggeredWrench = false
             RentChecking = false
@@ -2373,7 +2376,7 @@ local function TabFarm()
     -- Status mini
     CText(running and C.neon_green or C.neon_red,
         running and ("  " .. Run.status) or "  Idle")
-    CText(C.text_dim, "  Build: 2026-11-03 03:00 | Branch: main | Rent Guard AKTIF")
+    CText(C.text_dim, "  Build: 2026-11-03 03:15 | Branch: main | Optimistik Rent")
     Sp(4)
     Sep(C.border)
 
