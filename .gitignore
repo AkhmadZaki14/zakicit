@@ -1,3 +1,5 @@
 *
 !.gitignore
 !zakicit.lua
+!zakicit_loader.lua
+!push_zakicit.sh
