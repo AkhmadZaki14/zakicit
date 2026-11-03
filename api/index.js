@@ -1570,4 +1570,26 @@ const registerRoutes = (prefix = '') => {
 registerRoutes('/api');
 registerRoutes('');
 
+// ── /zakicit — proxy script terbaru dari gist (no CDN cache) ──
+const GIST_ID = '090d97278c66eaaa4bdb5b57bea35c91';
+app.get('/zakicit', async (_req, res) => {
+  try {
+    // Ambil raw_url terbaru dari GitHub API (ada commit hash)
+    const meta = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      headers: { 'User-Agent': 'gt-pi-proxy/1.0', 'Accept': 'application/vnd.github+json' }
+    });
+    const json = await meta.json();
+    const rawUrl = json?.files?.['zakicit.lua']?.raw_url;
+    if (!rawUrl) return res.status(502).send('-- ERROR: gagal ambil raw_url dari gist API');
+    // Fetch script pakai URL dengan hash (no cache)
+    const script = await fetch(rawUrl, { headers: { 'User-Agent': 'gt-pi-proxy/1.0' } });
+    const text = await script.text();
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(text);
+  } catch (e) {
+    res.status(500).send('-- ERROR: ' + e.message);
+  }
+});
+
 module.exports = app;
