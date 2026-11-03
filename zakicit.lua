@@ -4,7 +4,7 @@
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
-local BUILD_ID = "1104-0616"
+local BUILD_ID = "1104-0631"
 
 -- ------------------------------------------------------------
 --  STATE & SETTINGS
@@ -129,6 +129,7 @@ local StuckGems        = 0
 local StuckGemTime     = 0
 local StuckCount       = 0
 local PosCheckCounter  = 0
+local PosMiss          = 0   -- berturut-turut gagal pos check SENSOR 2
 local Disconnected     = false
 local ConsecErrors     = 0
 
@@ -496,6 +497,22 @@ local function SlowFindPath(tx, ty, stepDelay)
         FindPath(tx, ty)
         Sleep(stepDelay)
     end
+end
+
+-- GoTo: jalan ke tile (tx,ty) dengan retry, return true kalau sampai
+local function GoTo(tx, ty, tries)
+    for i = 1, (tries or 3) do
+        SlowFindPath(tx, ty, D("PathStep"))
+        local me = GetLocal()
+        if me and me.pos then
+            local cx = math.floor(me.pos.x / 32)
+            local cy = math.floor(me.pos.y / 32)
+            if math.abs(cx - tx) + math.abs(cy - ty) <= 1 then return true end
+        end
+        FindPath(tx, ty)
+        Sleep(800)
+    end
+    return false
 end
 
 local function Raw(a, b, c, d, e)
@@ -963,6 +980,7 @@ local function TakeConsumes()
     local ww = GetWorld()
     if not ww then
         Log("`4[Consume]`w GetWorld() nil, batal restock.")
+        _RestockRunning = false
         m = false
         return
     end
@@ -1007,8 +1025,14 @@ local function TakeConsumes()
             tries = tries + 1
 
             local ax, ay = FindAdjacent(vend.x, vend.y)
-            if not ax then ax, ay = vend.x, vend.y end
-            SlowFindPath(ax, ay, D("PathStep"))
+            if not ax or (ax == vend.x and ay == vend.y) then
+                Log(string.format("`3[Consume]`w Tidak ada tile adjacent untuk vending (%d,%d), skip.", vend.x, vend.y))
+                goto next_vend
+            end
+            if not GoTo(ax, ay, 3) then
+                Log(string.format("`3[Consume]`w Gagal sampai ke vending (%d,%d), coba berikutnya.", vend.x, vend.y))
+                goto next_vend
+            end
             Sleep(D("RemoteStep"))
 
             _VendPending = { x = vend.x, y = vend.y, id = cid }
@@ -1910,15 +1934,10 @@ local function Step()
             local me = GetLocal()
             local curX = me and me.pos and math.floor(me.pos.x / 32) or -999
             local curY = me and me.pos and math.floor(me.pos.y / 32) or -999
-            if curX ~= S.PosX or curY ~= S.PosY then
+            if math.abs(curX - S.PosX) > 1 or math.abs(curY - S.PosY) > 1 then
                 Log(string.format("`4[PosGuard]`w Gagal masuk Farm Pos! Sekarang di (%d, %d), target (%d, %d)", curX, curY, S.PosX, S.PosY))
                 Cheat(false)
                 m = false
-                -- Jika ada paywall, kemungkinan tertahan pintu paywall tertutup!
-                if S.PNB.AutoPaywall and S.PaywallX ~= 0 then
-                    Log("`3[PosGuard]`w Mencoba periksa & bayar paywall...")
-                    CheckPaywall(true)
-                end
                 return
             end
 
@@ -1963,15 +1982,16 @@ local function Step()
         local me = GetLocal()
         local curX = me and me.pos and math.floor(me.pos.x / 32) or -999
         local curY = me and me.pos and math.floor(me.pos.y / 32) or -999
-        if curX ~= S.PosX or curY ~= S.PosY then
+        if math.abs(curX - S.PosX) > 1 or math.abs(curY - S.PosY) > 1 then
+            PosMiss = PosMiss + 1
+            if PosMiss < 3 then return end
+            PosMiss = 0
             Log(string.format("`4[PosGuard]`w Bot terlempar dari Farm Pos! Sekarang di (%d, %d). Matikan cheat...", curX, curY))
             Cheat(false)
             m = false
-            if S.PNB.AutoPaywall and S.PaywallX ~= 0 then
-                Log("`3[PosGuard]`w Cek akses paywall setelah terlempar...")
-                CheckPaywall(true)
-            end
             return
+        else
+            PosMiss = 0
         end
         Run.status = "Farming"
 
@@ -2007,15 +2027,6 @@ local function Step()
             end
         end
 
-        -- [16b] Pos check tiap 5 step
-        PosCheckCounter = PosCheckCounter + 1
-        if PosCheckCounter >= 5 then
-            PosCheckCounter = 0
-            if math.abs(curX - S.PosX) > 1 or math.abs(curY - S.PosY) > 1 then
-                Log(string.format("`4[PosGuard]`w Posisi bergeser > 1 tile (%d, %d). Reset farm...", curX, curY))
-                m = false
-            end
-        end
     end
 
     BuyCheat()
@@ -2031,6 +2042,8 @@ local function Step()
                 pcall(TakeConsumes)
                 _RestockRunning = false  -- pastikan clear walau pcall catch error
                 LastRestockCheck = NowTime()
+                -- Kalau masih butuh restock setelah coba beli, cooldown 15 menit
+                if _NeedsRestock() then LastRestockCheck = NowTime() + 900 end
                 if not Run.start then return end
             else
                 LastRestockCheck = now -- tidak perlu restock, update timer
@@ -2254,8 +2267,8 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             return true
         end
 
-        -- DIAGNOSTIC LOGGER: Cetak ringkasan setiap dialog yang masuk
-        if a:find("clothlease", 1, true) or a:find("Active effects", 1, true) or a:find("Rented Clothing", 1, true) then
+        -- DIAGNOSTIC LOGGER: Cetak ringkasan setiap dialog yang masuk (hanya saat debug)
+        if S.PNB.DebugVend and (a:find("clothlease", 1, true) or a:find("Active effects", 1, true) or a:find("Rented Clothing", 1, true)) then
             Log(string.format("`3[RentDbg]`w Dialog Masuk! WrenchFlag=%s, Isi=%s", tostring(BotTriggeredWrench), a:sub(1, 80)))
         end
 
