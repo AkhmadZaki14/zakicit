@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-04T00:00:00 CONSUMABLE_VEND_OK PATH_FIX2 RENT_GUARD_FIX VEND_FIX
+--  BUILD: 2026-11-04T00:00:00 CONSUMABLE_VEND_OK PATH_FIX2 RENT_GUARD_FIX VEND_FIX2
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -897,10 +897,11 @@ end
 
 -- ── Consumable restock via vending ───────────────────────────
 -- State untuk intercept dialog vending (dipakai di OnVariant hook)
-local _VendPending   = nil   -- { x, y, id } — sedang nunggu dialog vend_buy
-local _VendConfirm   = nil   -- { x, y }     — sedang nunggu dialog vend_buyconfirm
-local _VendBought    = false -- set true oleh hook saat console "bought N X"
-local _VendFailed    = {}    -- ["x,y"] = true — vending yang sudah gagal, skip
+local _VendPending   = nil
+local _VendConfirm   = nil
+local _VendBought    = false
+local _VendFailed    = {}
+local _RestockRunning = false  -- guard: cegah TakeConsumes jalan dobel
 
 local function _BuildConsumeList()
     local ids = {}
@@ -920,8 +921,14 @@ end
 -- Dipanggil dari Step() — beli consumable yang habis dari vending
 local function TakeConsumes()
     if not S.PNB.BuyConsumables then return end
+    if _RestockRunning then
+        Log("`3[Consume]`w Restock sudah jalan, skip.")
+        return
+    end
     local ids = _BuildConsumeList()
     if #ids == 0 then return end
+
+    _RestockRunning = true
 
     -- Matikan cheat + reset farming state sebelum bergerak ke vending
     Cheat(false)
@@ -1059,6 +1066,7 @@ local function TakeConsumes()
 
     _VendFailed = {}  -- sudah di-reset di awal, ini cleanup redundan tapi tidak masalah
     m = false  -- selalu reset setelah selesai agar Step re-setup farming
+    _RestockRunning = false
 
     -- Balik ke world farming
     if useOtherWorld then
@@ -2020,7 +2028,8 @@ local function Step()
                 m = false
                 Run.status = "Restock consumable"
                 pcall(TakeConsumes)
-                LastRestockCheck = NowTime() -- set SETELAH selesai, bukan sebelum
+                _RestockRunning = false  -- pastikan clear walau pcall catch error
+                LastRestockCheck = NowTime()
                 if not Run.start then return end
             else
                 LastRestockCheck = now -- tidak perlu restock, update timer
