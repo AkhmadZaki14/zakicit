@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-04T00:00:00 CONSUMABLE_VEND_OK PATH_FIX2
+--  BUILD: 2026-11-04T00:00:00 CONSUMABLE_VEND_OK PATH_FIX2 RENT_GUARD_FIX
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -2246,11 +2246,11 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             Log(string.format("`3[RentDbg]`w Dialog Masuk! WrenchFlag=%s, Isi=%s", tostring(BotTriggeredWrench), a:sub(1, 80)))
         end
 
-        -- RENTING 1: Intercept Self-Wrench Popup -> deteksi RentEquipped dari Active effects: lalu buka clothlease
-        -- GUARD: HANYA aktif jika bot PNB RUNNING atau sedang proses RentChecking / RentWarActive!
-        -- Jika bot OFF dan user wrench manual, jangan dicegat agar dialog profil asli tetap bisa dibuka.
+        -- RENTING 1: Intercept Self-Wrench Popup → deteksi RentEquipped dari Active effects
+        -- GUARD KETAT: HANYA aktif saat bot sedang proses RentChecking atau RentWarActive!
+        -- Run.start TIDAK cukup — bot farming normal juga Run.start=true tapi tidak perlu intercept.
         local isSelfPopupWithRent = (a:find("end_dialog|popup", 1, true) or a:find("add_player_info", 1, true)) and a:find("clothlease", 1, true)
-        if isSelfPopupWithRent and (Run.start or RentChecking or RentWarActive) then
+        if isSelfPopupWithRent and (RentChecking or RentWarActive) then
             local clean = StripColor(a)
             local target = S.PNB.RentTargetItem or "Auto-Detect"
             -- Ambil bagian Active effects: saja
@@ -2277,9 +2277,9 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             return true
         end
 
-        -- RENTING 2: Intercept Menu Rented Clothing (clothlease) -> parse durasi + pasang jika perlu
-        -- Format: add_button_with_icon|cloth_-258|`223h 58m 35s``|staticframe|16690||
-        if (Run.start or RentChecking or RentWarActive) and a:find("clothlease", 1, true) and (a:find("Rented Clothing", 1, true) or a:find("staticframe", 1, true)) then
+        -- RENTING 2: Intercept Menu Rented Clothing (clothlease) → parse durasi + pasang jika perlu
+        -- GUARD KETAT: HANYA saat RentChecking atau RentWarActive, bukan Run.start biasa!
+        if (RentChecking or RentWarActive) and a:find("clothlease", 1, true) and (a:find("Rented Clothing", 1, true) or a:find("staticframe", 1, true)) then
             local clean = StripColor(a)
             local target = S.PNB.RentTargetItem or "Auto-Detect"
             Log(string.format("`3[Rent]`w clothlease: TargetItem terbaca='%s'", tostring(target)))
