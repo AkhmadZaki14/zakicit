@@ -4,6 +4,7 @@
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
+local BUILD_ID = "1104-0616"
 
 -- ------------------------------------------------------------
 --  STATE & SETTINGS
@@ -2743,7 +2744,7 @@ local function TabFarm()
         if Btn("START", T.ok, -1, 46) then StartPNB() end
     end
     CText(running and T.ok or T.dim, running and ("  " .. Run.status) or "  Idle")
-    CText(T.dim, "  Build: 2026-11-04 PATH_FIX | CLEAN DARK v3")
+    CText(T.dim, "  Build: " .. BUILD_ID .. " | CLEAN DARK v3")
     Sp(4)
 
     Card("c_stat", 154, "Statistik")
@@ -3214,7 +3215,7 @@ AddHook("OnDraw", "ZAKICIT_DRAW", function()
         { "Text",           T.text },
     })
 
-    if ImGui.Begin("ZAKICIT PNB v2 [11-04]") then
+    if ImGui.Begin("ZAKICIT PNB v2 [" .. BUILD_ID .. "]") then
         if ImGui.BeginTabBar("ZakiTabs") then
             if ImGui.BeginTabItem("Farm")    then Sp(2); TabFarm();    ImGui.EndTabItem() end
             if ImGui.BeginTabItem("Mag")     then Sp(2); TabMag();     ImGui.EndTabItem() end
@@ -3243,4 +3244,4 @@ do
     end
 end
 LoadSettings()
-Log("`2ZAKICIT PNB v2 [11-04] siap. Buka menu.")
+Log("`2ZAKICIT PNB v2 [" .. BUILD_ID .. "] siap. Buka menu.")
