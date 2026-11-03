@@ -51,6 +51,7 @@ Setting = {
         BuyConsumeMaxPrice= 10,      -- harga max per item (WL)
         BuyConsumeAmount  = 200,     -- jumlah beli per transaksi
         BuyConsumeTries   = 10,      -- max retry per item sebelum skip
+        BuyConsumeMaxTotal= 500,     -- max total WL per transaksi (harga × jumlah beli)
         DebugVend         = false,   -- log field tile.extra vending pertama
     },
     World     = "",
@@ -1009,10 +1010,11 @@ local function TakeConsumes()
                 goto next_vend
             end
 
-            -- Kirim dialog_return vend_buy
+            -- Kirim dialog_return vend_buy dengan jumlah yang sudah disesuaikan stok
+            local sendAmt = (_VendConfirm and _VendConfirm.amt) or buyAmt
             SendPacket(2, string.format(
                 "action|dialog_return\ndialog_name|vend_buy\nx|%d|\ny|%d|\nbuyamount|%d\n",
-                vend.x, vend.y, buyAmt))
+                vend.x, vend.y, sendAmt))
             _VendConfirm = nil
             Sleep(D("RemoteDialog"))
 
@@ -1055,6 +1057,13 @@ local function TakeConsumes()
             Run.status = "Balik ke world farm"
             Join(worldName)
             Sleep(D("Join"))
+            -- Tunggu konfirmasi masuk world farm
+            local deadline = NowTime() + 8
+            while NowTime() < deadline do
+                local ww = GetWorld()
+                if ww and ww.name and ww.name:upper() == worldName then break end
+                Sleep(500)
+            end
         end
     end
 end
@@ -1074,11 +1083,26 @@ local function Consume()
         Sleep(D("Consume"))
     end
 
-    -- Consume dari inventory
-    Log("`wConsuming `9Arroz `wand `2Clover")
+    -- Consume dari inventory — hanya item yang toggle-nya aktif
+    local consumeIds = {}
+    if S.PNB.BuyConsumeArroz  then table.insert(consumeIds, 4604) end
+    if S.PNB.BuyConsumeClover then table.insert(consumeIds, 528)  end
+    if S.PNB.BuyConsumeSong   then table.insert(consumeIds, 1056) end
+    -- Fallback: kalau BuyConsumables mati, consume semua seperti sebelumnya
+    if not S.PNB.BuyConsumables or #consumeIds == 0 then
+        consumeIds = { 4604, 528, 1056 }
+    end
+    local names = { [4604]="Arroz", [528]="Clover", [1056]="Songpyeon" }
+    local activeNames = {}
+    for _, id in ipairs(consumeIds) do
+        if inv(id) > 0 then table.insert(activeNames, names[id] or tostring(id)) end
+    end
+    if #activeNames > 0 then
+        Log("`wConsuming: `9" .. table.concat(activeNames, ", "))
+    end
     Cheat(false)
     Sleep(D("Consume"))
-    for _, id in ipairs({ 4604, 528, 1056 }) do
+    for _, id in ipairs(consumeIds) do
         if inv(id) > 0 then
             Raw(3, 0, id, S.PosX, S.PosY)
             Sleep(D("Consume"))
@@ -2174,16 +2198,40 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                     return true
                 end
                 Log(string.format("`2[Consume]`w Vending (%d,%d) OK: %s %dWL/item, total ~%dWL. Beli %d...", dx, dy, expectName, priceWl, totalWl, buyAmt))
-                _VendConfirm = { x = dx, y = dy }
+                -- Cek batas total WL
+                local maxTotal = math.max(1, tonumber(S.PNB.BuyConsumeMaxTotal) or 500)
+                if totalWl > maxTotal then
+                    Log(string.format("`4[Consume]`w Total %dWL > batas %dWL. Skip.", totalWl, maxTotal))
+                    _VendFailed[dx..","..dy] = true
+                    _VendPending = nil
+                    SendPacket(2, string.format("action|dialog_return\ndialog_name|vend_buy\nx|%d|\ny|%d|\nbuyamount|0\n", dx, dy))
+                    return true
+                end
+                -- Baca stok vending dari dialog, pakai min(buyAmt, stok) biar tidak overshoot
+                local vendStock = tonumber(clean:match("total of (%d+)")) or buyAmt
+                local actualAmt = math.min(buyAmt, vendStock)
+                if actualAmt < 1 then
+                    Log(string.format("`4[Consume]`w Vending (%d,%d) stok 0. Skip.", dx, dy))
+                    _VendFailed[dx..","..dy] = true
+                    _VendPending = nil
+                    SendPacket(2, string.format("action|dialog_return\ndialog_name|vend_buy\nx|%d|\ny|%d|\nbuyamount|0\n", dx, dy))
+                    return true
+                end
+                _VendConfirm = { x = dx, y = dy, amt = actualAmt }
                 return true  -- biarkan TakeConsumes yang kirim dialog_return
             end
         end
 
-        -- VENDING: intercept konfirmasi vend_buyconfirm → auto-confirm
-        if _VendPending and a:find("vend_buyconfirm", 1, true) then
+        -- VENDING: intercept konfirmasi vend_buyconfirm → auto-confirm HANYA jika vend_buy sudah divalidasi
+        if _VendPending and _VendConfirm == nil and a:find("vend_buyconfirm", 1, true) then
+            -- _VendConfirm nil di sini berarti hook sudah clear-kan setelah kirim dialog_return vend_buy
+            -- tapi belum dapat buyconfirm — ini flow normal, lanjut confirm
             local dx = tonumber(a:match("embed_data|x|(%d+)")) or -1
             local dy = tonumber(a:match("embed_data|y|(%d+)")) or -1
             local bamt = tonumber(a:match("embed_data|buyamount|(%d+)")) or 1
+            if S.PNB.DebugVend then
+                Log(string.format("`3[VendDbg]`w vend_buyconfirm x=%d y=%d amt=%d", dx, dy, bamt))
+            end
             RunThread(function()
                 Sleep(200)
                 SendPacket(2, string.format(
@@ -2845,6 +2893,9 @@ local function TabSetting()
             FW()
             local cpt, vpt = ImGui.InputInt("Max Coba per Item##bctr", S.PNB.BuyConsumeTries)
             if cpt then S.PNB.BuyConsumeTries = math.max(1, vpt) end
+            FW()
+            local cpmx, vpmx = ImGui.InputInt("Max Total WL per Transaksi##bcmxt", S.PNB.BuyConsumeMaxTotal)
+            if cpmx then S.PNB.BuyConsumeMaxTotal = math.max(1, vpmx) end
             Sp(2)
             local cbD, vD = CB("Debug Vend (log tile.extra)##dbvend", S.PNB.DebugVend)
             if cbD then S.PNB.DebugVend = vD end
