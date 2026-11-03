@@ -2731,7 +2731,7 @@ local function TabFarm()
         if Btn("START", T.ok, -1, 46) then StartPNB() end
     end
     CText(running and T.ok or T.dim, running and ("  " .. Run.status) or "  Idle")
-    CText(T.dim, "  Build: 2026-11-03 05:50 | CLEAN DARK v3")
+    CText(T.dim, "  Build: 2026-11-04 | CLEAN DARK v3")
     Sp(4)
 
     Card("c_stat", 154, "Statistik")
@@ -3183,7 +3183,7 @@ AddHook("OnDraw", "ZAKICIT_DRAW", function()
         { "Text",           T.text },
     })
 
-    if ImGui.Begin("ZAKICIT PNB v2 [07:45]") then
+    if ImGui.Begin("ZAKICIT PNB v2 [11-04]") then
         if ImGui.BeginTabBar("ZakiTabs") then
             if ImGui.BeginTabItem("Farm")    then Sp(2); TabFarm();    ImGui.EndTabItem() end
             if ImGui.BeginTabItem("Mag")     then Sp(2); TabMag();     ImGui.EndTabItem() end
