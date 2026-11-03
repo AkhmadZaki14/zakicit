@@ -4,9 +4,7 @@
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
-_G.ZAKICIT_GEN = (_G.ZAKICIT_GEN or 0) + 1
-local MY_GEN = _G.ZAKICIT_GEN
-local BUILD_ID = "1104-0640"
+local BUILD_ID = "1104-0648"
 
 -- ------------------------------------------------------------
 --  STATE & SETTINGS
@@ -32,7 +30,7 @@ Setting = {
         FaceRight         = false,   -- hadap kanan saat farming BFG
         AntiLag           = false,   -- skip heavy render (FC prevention)
         IgnoreOther       = false,   -- abaikan player lain
-        EnableMonitor     = false,   -- remote monitoring nonaktif by default (perlu token)
+        EnableMonitor     = true,    -- remote monitoring aktif by default
         ScanBG            = false,   -- filter magplant berdasarkan background ID
         MagBgID           = 0,       -- ID background target magplant
         AutoPaywall       = false,   -- aktifkan fitur cek/sensor paywall
@@ -56,8 +54,6 @@ Setting = {
         BuyConsumeTries   = 10,      -- max retry per item sebelum skip
         BuyConsumeMaxTotal= 500,     -- max total WL per transaksi (harga ? jumlah beli)
         DebugVend         = false,   -- log field tile.extra vending pertama
-        FonnteToken       = "",      -- token Fonnte WA alert (kosong = nonaktif)
-        FonnteTarget      = "",      -- target WA group/nomor
     },
     World     = "",
     PosX      = 0,
@@ -133,7 +129,6 @@ local StuckGems        = 0
 local StuckGemTime     = 0
 local StuckCount       = 0
 local PosCheckCounter  = 0
-local PosMiss          = 0   -- berturut-turut gagal pos check SENSOR 2
 local Disconnected     = false
 local ConsecErrors     = 0
 
@@ -187,28 +182,25 @@ end
 local function ValidWebhook(url) return false end
 local function WebhookNotify(eventType, detail) end
 
--- [WA ALERT] Kirim notif ke WhatsApp via Fonnte (non-blocking via RunThread)
--- Token dan target dari setting, bukan hardcode
+-- [WA ALERT] Kirim notif ke WhatsApp via Fonnte langsung dari bot (non-blocking via RunThread)
+local FONNTE_TOKEN  = "J458dV68YKaGXJ6h3bPJ"
+local FONNTE_TARGET = "120363429381553519@g.us"
 local WAAlertLimit  = {}
 local function SendWhatsAppAlert(alasan, detail)
-    local token = S.PNB.FonnteToken or ""
-    local target = S.PNB.FonnteTarget or ""
-    if token == "" or target == "" then return end  -- nonaktif kalau kosong
     local now = NowTime()
     if WAAlertLimit[alasan] and (now - WAAlertLimit[alasan] < 180) then return end
     WAAlertLimit[alasan] = now
     RunThread(function()
-        if _G.ZAKICIT_GEN ~= MY_GEN then return end
         local me = GetLocal and GetLocal()
         local botName = (me and me.name and StripColor(me.name)) or "Bot"
         local world = (worldName ~= "" and worldName) or "?"
         local pesan = string.format(
-            "[%s] di %s\nAlasan: %s\nDetail: %s\nBot TIDAK dimatikan -- auto-recovery aktif.",
+            "?? [%s] di %s\nAlasan: %s\nDetail: %s\nBot TIDAK dimatikan -- auto-recovery aktif.",
             botName, world, alasan, tostring(detail or "-"))
         pcall(MakeRequest, "https://api.fonnte.com/send", "POST", {
-            ["Authorization"] = token,
+            ["Authorization"] = FONNTE_TOKEN,
             ["Content-Type"]  = "application/json",
-        }, string.format('{"target":"%s","message":%q}', target, pesan))
+        }, string.format('{"target":"%s","message":%q}', FONNTE_TARGET, pesan))
     end)
     Log("`3[WA Alert]`w " .. alasan)
 end
@@ -506,23 +498,6 @@ local function SlowFindPath(tx, ty, stepDelay)
     end
 end
 
--- GoTo: jalan ke tile (tx,ty) dengan retry, return true kalau sampai
--- FindPath = teleport (per Bothax docs), SlowFindPath = step-by-step A*
-local function GoTo(tx, ty, tries)
-    for i = 1, (tries or 3) do
-        FindPath(tx, ty)
-        Sleep(700)
-        local me = GetLocal()
-        if me and me.pos then
-            local cx = math.floor(me.pos.x / 32)
-            local cy = math.floor(me.pos.y / 32)
-            if math.abs(cx - tx) + math.abs(cy - ty) <= 1 then return true end
-        end
-        SlowFindPath(tx, ty, D("PathStep"))
-    end
-    return false
-end
-
 local function Raw(a, b, c, d, e)
     SendPacketRaw(false, {
         type = a, state = b, value = c, px = d, py = e,
@@ -550,20 +525,7 @@ end
 
 -- [18] Wrench(x,y) dihapus; pertahankan WrenchTile
 -- Wrench tile langsung via koordinat absolut (tanpa offset relatif dari player)
-local _lastWr = 0
-local function WrenchOK(tag)
-    local c = os.clock()
-    if c - _lastWr < 1.0 and tag ~= "war" then
-        if S.PNB.DebugVend then Log("`3[Wrench]`w diblok: " .. tag) end
-        return false
-    end
-    _lastWr = c
-    if S.PNB.DebugVend then Log("`3[Wrench]`w " .. tag) end
-    return true
-end
-
-local function WrenchTile(tx, ty, tag)
-    if not WrenchOK(tag or ("tile "..tx..","..ty)) then return end
+local function WrenchTile(tx, ty)
     local pkt = {
         type = 3,
         value = 32,
@@ -996,21 +958,19 @@ local function TakeConsumes()
         end
     end
 
-    -- Scan semua vending SEKALI untuk semua cid (hemat -- pakai GetTiles)
+    -- Scan semua vending SEKALI untuk semua cid (hemat GetTile)
     local allCandidates = {}  -- [key] = { x, y, key }
     local ww = GetWorld()
     if not ww then
         Log("`4[Consume]`w GetWorld() nil, batal restock.")
-        _RestockRunning = false
         m = false
         return
     end
     local debugDone = false
-    for _, t in pairs(GetTiles() or {}) do
-        if t and t.fg == 9268 then
-            local tx = t.x or (t.pos and math.floor(t.pos.x / 32))
-            local ty = t.y or (t.pos and math.floor(t.pos.y / 32))
-            if tx and ty then
+    for y = 0, (ww.height or 60) - 1 do
+        for x = 0, (ww.width or 100) - 1 do
+            local t = GetTile(x, y)
+            if t and t.fg == 9268 then
                 if S.PNB.DebugVend and not debugDone and t.extra then
                     debugDone = true
                     local dbg = "DebugVend tile.extra:"
@@ -1019,9 +979,9 @@ local function TakeConsumes()
                     end
                     Log("`3" .. dbg)
                 end
-                local key = tx .. "," .. ty
+                local key = x .. "," .. y
                 if not _VendFailed[key] then
-                    table.insert(allCandidates, { x = tx, y = ty, key = key })
+                    table.insert(allCandidates, { x = x, y = y, key = key })
                 end
             end
         end
@@ -1047,14 +1007,8 @@ local function TakeConsumes()
             tries = tries + 1
 
             local ax, ay = FindAdjacent(vend.x, vend.y)
-            if not ax or (ax == vend.x and ay == vend.y) then
-                Log(string.format("`3[Consume]`w Tidak ada tile adjacent untuk vending (%d,%d), skip.", vend.x, vend.y))
-                goto next_vend
-            end
-            if not GoTo(ax, ay, 3) then
-                Log(string.format("`3[Consume]`w Gagal sampai ke vending (%d,%d), coba berikutnya.", vend.x, vend.y))
-                goto next_vend
-            end
+            if not ax then ax, ay = vend.x, vend.y end
+            SlowFindPath(ax, ay, D("PathStep"))
             Sleep(D("RemoteStep"))
 
             _VendPending = { x = vend.x, y = vend.y, id = cid }
@@ -1314,12 +1268,6 @@ local function CheckRentStatus(force)
     RentChecking = true
     BotTriggeredWrench = true
 
-    if not WrenchOK("self-rent") then
-        RentChecking = false
-        BotTriggeredWrench = false
-        return
-    end
-
     local me = GetLocal()
     local netId = me and me.netid or 0
     Log(string.format("`9[Rent]`w Cek status sewa (silent, netid=%d)...", netId))
@@ -1341,13 +1289,8 @@ local function SilentEquipRent(force)
 end
 
 -- Step 2: WAR Renting (Spam mesin sewa sampai dapat)
-local _lastWarRent = 0
 local function DoWarRent()
     if not S.PNB.AutoRent then return end
-    -- Cooldown 120s antar sesi war
-    local now = NowTime()
-    if now - _lastWarRent < 120 then return end
-    _lastWarRent = now
     local rentWorld = (S.PNB.RentWorld or ""):upper()
     if rentWorld == "" or S.RentX == 0 and S.RentY == 0 then
         Log("`4[Rent]`w World sewa / Posisi Renting Station belum di-set!")
@@ -1406,7 +1349,7 @@ local function DoWarRent()
             -- Spam wrench cepat setiap 350ms (0.35 detik)
             if curClock - lastWrenchTick >= 0.35 or lastWrenchTick == 0 then
                 lastWrenchTick = curClock
-                WrenchTile(S.RentX, S.RentY, "war")
+                WrenchTile(S.RentX, S.RentY)
             end
         elseif RentStep == "WAIT_CONFIRM" then
             if now - RentStepTime > 3 then
@@ -1666,11 +1609,6 @@ do
                 local cmdAction = content:match('"action"%s*:%s*"([^"]+)"')
                 local cmdParam  = content:match('"param"%s*:%s*"([^"]+)"')
                 if cmdAction then
-                    -- Remote commands hanya diproses jika MonitorToken tidak kosong
-                    if (S.PNB.MonitorToken or "") == "" then
-                        Log("`3[RemoteCmd]`w Diabaikan: MonitorToken kosong.")
-                        return
-                    end
                     if cmdId then self.lastCmdId = cmdId end
                     Log("`3[RemoteCmd] Action: " .. cmdAction .. " Param: " .. tostring(cmdParam))
                     if cmdAction == "warp" and cmdParam and cmdParam ~= "" then
@@ -1901,7 +1839,7 @@ local function Step()
     -- 1. Cek durasi sewa secara periodik (setiap 10 menit atau saat durasi belum diketahui)
     if S.PNB.AutoRent and not RentChecking then
         local now = NowTime()
-        if RentExpires == 0 and (now - LastRentCheck >= 60) then
+        if RentExpires == 0 and (now - LastRentCheck >= 30) then
             CheckRentStatus(false)
         elseif RentExpires > 0 and (now - LastRentCheck >= 600) then
             -- Refresh sisa jam sewa setiap 10 menit
@@ -1909,7 +1847,7 @@ local function Step()
         end
     end
     -- 2. WAR RENTING: Jika durasi sewa sisa < 60 detik atau belum punya item sewa:
-    if S.PNB.AutoRent and S.RentX ~= 0 and (RentExpires > 0 and NowTime() >= RentExpires - 60 or (RentExpires <= 0 and not RentChecking and NowTime() - LastRentCheck >= 60)) then
+    if S.PNB.AutoRent and S.RentX ~= 0 and (RentExpires > 0 and NowTime() >= RentExpires - 60 or (RentExpires == 0 and not RentChecking and NowTime() - LastRentCheck >= 60)) then
         DoWarRent()
     end
 
@@ -1972,10 +1910,15 @@ local function Step()
             local me = GetLocal()
             local curX = me and me.pos and math.floor(me.pos.x / 32) or -999
             local curY = me and me.pos and math.floor(me.pos.y / 32) or -999
-            if math.abs(curX - S.PosX) > 1 or math.abs(curY - S.PosY) > 1 then
+            if curX ~= S.PosX or curY ~= S.PosY then
                 Log(string.format("`4[PosGuard]`w Gagal masuk Farm Pos! Sekarang di (%d, %d), target (%d, %d)", curX, curY, S.PosX, S.PosY))
                 Cheat(false)
                 m = false
+                -- Jika ada paywall, kemungkinan tertahan pintu paywall tertutup!
+                if S.PNB.AutoPaywall and S.PaywallX ~= 0 then
+                    Log("`3[PosGuard]`w Mencoba periksa & bayar paywall...")
+                    CheckPaywall(true)
+                end
                 return
             end
 
@@ -2020,16 +1963,15 @@ local function Step()
         local me = GetLocal()
         local curX = me and me.pos and math.floor(me.pos.x / 32) or -999
         local curY = me and me.pos and math.floor(me.pos.y / 32) or -999
-        if math.abs(curX - S.PosX) > 1 or math.abs(curY - S.PosY) > 1 then
-            PosMiss = PosMiss + 1
-            if PosMiss < 3 then return end
-            PosMiss = 0
+        if curX ~= S.PosX or curY ~= S.PosY then
             Log(string.format("`4[PosGuard]`w Bot terlempar dari Farm Pos! Sekarang di (%d, %d). Matikan cheat...", curX, curY))
             Cheat(false)
             m = false
+            if S.PNB.AutoPaywall and S.PaywallX ~= 0 then
+                Log("`3[PosGuard]`w Cek akses paywall setelah terlempar...")
+                CheckPaywall(true)
+            end
             return
-        else
-            PosMiss = 0
         end
         Run.status = "Farming"
 
@@ -2065,6 +2007,15 @@ local function Step()
             end
         end
 
+        -- [16b] Pos check tiap 5 step
+        PosCheckCounter = PosCheckCounter + 1
+        if PosCheckCounter >= 5 then
+            PosCheckCounter = 0
+            if math.abs(curX - S.PosX) > 1 or math.abs(curY - S.PosY) > 1 then
+                Log(string.format("`4[PosGuard]`w Posisi bergeser > 1 tile (%d, %d). Reset farm...", curX, curY))
+                m = false
+            end
+        end
     end
 
     BuyCheat()
@@ -2080,8 +2031,6 @@ local function Step()
                 pcall(TakeConsumes)
                 _RestockRunning = false  -- pastikan clear walau pcall catch error
                 LastRestockCheck = NowTime()
-                -- Kalau masih butuh restock setelah coba beli, cooldown 15 menit
-                if _NeedsRestock() then LastRestockCheck = NowTime() + 900 end
                 if not Run.start then return end
             else
                 LastRestockCheck = now -- tidak perlu restock, update timer
@@ -2136,7 +2085,6 @@ end
 
 RunThread(function()
     while true do
-        if _G.ZAKICIT_GEN ~= MY_GEN then break end
         Sleep(D("Loop"))
         if Run.start then
             local ok, err = pcall(Step)
@@ -2167,7 +2115,6 @@ end)
 -- Monitor di thread terpisah supaya MakeRequest ga block bot loop
 RunThread(function()
     while true do
-        if _G.ZAKICIT_GEN ~= MY_GEN then break end
         Sleep(10000)
         pcall(PushWebMonitor)
     end
@@ -2176,13 +2123,7 @@ end)
 -- ------------------------------------------------------------
 --  HOOKS
 -- ------------------------------------------------------------
--- Clean up old hooks before re-registering (reload safety)
-pcall(RemoveHook, "PNB_RAW")
-pcall(RemoveHook, "PNB_VAR")
-pcall(RemoveHook, "ZAKICIT_DRAW")
-
 AddHook("OnSendPacketRaw", "PNB_RAW", function(pkt)
-    if _G.ZAKICIT_GEN ~= MY_GEN then return false end
     if pkt.value == 18 then
         if CapturePaywall then
             S.PaywallX = pkt.px
@@ -2223,7 +2164,6 @@ local BlockConsole = {
 }
 
 AddHook("OnVariant", "PNB_VAR", function(var)
-    if _G.ZAKICIT_GEN ~= MY_GEN then return false end
     local k, a, b = var[0], var[1], var[2]
     if k == "OnSDBroadcast" then
         return true -- [10] Blok popup dialog broadcast, jangan toggle /radio di sini
@@ -2314,26 +2254,16 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             return true
         end
 
-        -- DIAGNOSTIC LOGGER: Cetak ringkasan setiap dialog yang masuk (hanya saat debug)
-        if S.PNB.DebugVend and (a:find("clothlease", 1, true) or a:find("Active effects", 1, true) or a:find("Rented Clothing", 1, true)) then
+        -- DIAGNOSTIC LOGGER: Cetak ringkasan setiap dialog yang masuk
+        if a:find("clothlease", 1, true) or a:find("Active effects", 1, true) or a:find("Rented Clothing", 1, true) then
             Log(string.format("`3[RentDbg]`w Dialog Masuk! WrenchFlag=%s, Isi=%s", tostring(BotTriggeredWrench), a:sub(1, 80)))
         end
 
         -- RENTING 1: Intercept Self-Wrench Popup -> deteksi RentEquipped dari Active effects
         -- GUARD KETAT: HANYA aktif saat bot sedang proses RentChecking atau RentWarActive!
         -- Run.start TIDAK cukup -- bot farming normal juga Run.start=true tapi tidak perlu intercept.
-        local isSelfPopup = a:find("end_dialog|popup", 1, true) or a:find("add_player_info", 1, true)
-        local hasClothlease = a:find("clothlease", 1, true)
-        -- Popup self tanpa clothlease saat RentChecking = tidak ada item sewaan
-        if isSelfPopup and not hasClothlease and RentChecking then
-            RentChecking = false
-            RentEquipped = false
-            RentExpires = -1  -- tandai: tidak ada item sewaan
-            BotTriggeredWrench = false
-            Log("`3[Rent]`w Popup tanpa clothlease -- tidak ada item sewaan.")
-            return true
-        end
-        if isSelfPopup and hasClothlease and (RentChecking or RentWarActive) then
+        local isSelfPopupWithRent = (a:find("end_dialog|popup", 1, true) or a:find("add_player_info", 1, true)) and a:find("clothlease", 1, true)
+        if isSelfPopupWithRent and (RentChecking or RentWarActive) then
             local clean = StripColor(a)
             local target = S.PNB.RentTargetItem or "Auto-Detect"
             -- Ambil bagian Active effects: saja
@@ -3194,16 +3124,6 @@ local function TabSetting()
         FW()
         local chTok, nvTok = ImGui.InputText("##montok", S.PNB.MonitorToken or "", 128)
         if chTok then S.PNB.MonitorToken = tostring(nvTok) end
-        FW()
-        CText(T.dim, "Fonnte Token (WA Alert):")
-        FW()
-        local chFt, nvFt = ImGui.InputText("##fntok", S.PNB.FonnteToken or "", 128)
-        if chFt then S.PNB.FonnteToken = tostring(nvFt) end
-        FW()
-        CText(T.dim, "Fonnte Target (group/nomor):")
-        FW()
-        local chFg, nvFg = ImGui.InputText("##fntgt", S.PNB.FonnteTarget or "", 128)
-        if chFg then S.PNB.FonnteTarget = tostring(nvFg) end
         Sp(4)
     end
 
@@ -3272,7 +3192,6 @@ end
 -- ?? WINDOW ??????????????????????????????????????????????????
 local sizeSet = false
 AddHook("OnDraw", "ZAKICIT_DRAW", function()
-    if _G.ZAKICIT_GEN ~= MY_GEN then return end
     if not ImGui then return end
     if not sizeSet and ImGui.SetNextWindowSize then
         pcall(ImGui.SetNextWindowSize, ImVec2(440, 620), 4)
