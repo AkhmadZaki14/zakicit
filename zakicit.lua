@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-04T00:00:00 CONSUMABLE_VEND_OK PATH_FIX2 RENT_GUARD_FIX
+--  BUILD: 2026-11-04T00:00:00 CONSUMABLE_VEND_OK PATH_FIX2 RENT_GUARD_FIX VEND_FIX
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -926,6 +926,7 @@ local function TakeConsumes()
     -- Matikan cheat + reset farming state sebelum bergerak ke vending
     Cheat(false)
     m = false
+    _VendFailed = {}  -- reset di awal sesi, bukan akhir (kalau interrupt tidak nyangkut)
 
     local targetWorld = tostring(S.PNB.BuyConsumeWorld or ""):upper()
     local useOtherWorld = (targetWorld ~= "" and targetWorld ~= worldName)
@@ -1056,7 +1057,7 @@ local function TakeConsumes()
         ::continue::
     end
 
-    _VendFailed = {}
+    _VendFailed = {}  -- sudah di-reset di awal, ini cleanup redundan tapi tidak masalah
     m = false  -- selalu reset setelah selesai agar Step re-setup farming
 
     -- Balik ke world farming
@@ -2014,13 +2015,15 @@ local function Step()
     if S.PNB.BuyConsumables then
         local now = NowTime()
         if now - LastRestockCheck >= 300 then
-            LastRestockCheck = now
             if _NeedsRestock() then
                 Cheat(false)
                 m = false
                 Run.status = "Restock consumable"
                 pcall(TakeConsumes)
+                LastRestockCheck = NowTime() -- set SETELAH selesai, bukan sebelum
                 if not Run.start then return end
+            else
+                LastRestockCheck = now -- tidak perlu restock, update timer
             end
         end
     end
