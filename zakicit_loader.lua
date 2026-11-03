@@ -1,5 +1,5 @@
 -- ZAKICIT LOADER v3 — raw GitHub commit hash, no cache
-local URL = "https://raw.githubusercontent.com/AkhmadZaki14/zakicit/122b70c6c851bfd64e5e8119fb68dcf0fd59924b/zakicit.lua"
+local URL = "https://raw.githubusercontent.com/AkhmadZaki14/zakicit/e337f25be3d801bb4c52df26ae134cb338c43908/zakicit.lua"
 
 LogToConsole("`0[`4LOADER`0] Fetching zakicit...")
 
