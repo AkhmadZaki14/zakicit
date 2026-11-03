@@ -1,5 +1,5 @@
 -- ============================================================
---  ZAKICIT PNB v2 — Ultimate Consolidated Edition
+--  ZAKICIT PNB v2 -- Ultimate Consolidated Edition
 --  BUILD: 2026-11-04T00:00:00 CONSUMABLE_VEND_OK PATH_FIX2 RENT_GUARD_FIX VEND_FIX2
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
@@ -51,7 +51,7 @@ Setting = {
         BuyConsumeMaxPrice= 10,      -- harga max per item (WL)
         BuyConsumeAmount  = 200,     -- jumlah beli per transaksi
         BuyConsumeTries   = 10,      -- max retry per item sebelum skip
-        BuyConsumeMaxTotal= 500,     -- max total WL per transaksi (harga × jumlah beli)
+        BuyConsumeMaxTotal= 500,     -- max total WL per transaksi (harga ? jumlah beli)
         DebugVend         = false,   -- log field tile.extra vending pertama
     },
     World     = "",
@@ -194,7 +194,7 @@ local function SendWhatsAppAlert(alasan, detail)
         local botName = (me and me.name and StripColor(me.name)) or "Bot"
         local world = (worldName ~= "" and worldName) or "?"
         local pesan = string.format(
-            "⚠️ [%s] di %s\nAlasan: %s\nDetail: %s\nBot TIDAK dimatikan — auto-recovery aktif.",
+            "?? [%s] di %s\nAlasan: %s\nDetail: %s\nBot TIDAK dimatikan -- auto-recovery aktif.",
             botName, world, alasan, tostring(detail or "-"))
         pcall(MakeRequest, "https://api.fonnte.com/send", "POST", {
             ["Authorization"] = FONNTE_TOKEN,
@@ -476,7 +476,7 @@ local function SlowFindPath(tx, ty, stepDelay)
 
     local path = FindSafePath(cx, cy, tx, ty)
     if path and #path > 0 then
-        -- Step per node A* — bot ngikut jalur aman, bukan teleport lurus
+        -- Step per node A* -- bot ngikut jalur aman, bukan teleport lurus
         -- Skip node pertama (posisi sekarang), mulai dari index 2
         for i = 2, #path do
             local pt = path[i]
@@ -895,7 +895,7 @@ local function SuckBgems()
     end)
 end
 
--- ── Consumable restock via vending ───────────────────────────
+-- ?? Consumable restock via vending ???????????????????????????
 -- State untuk intercept dialog vending (dipakai di OnVariant hook)
 local _VendPending   = nil
 local _VendConfirm   = nil
@@ -918,7 +918,7 @@ local function _NeedsRestock()
     return false
 end
 
--- Dipanggil dari Step() — beli consumable yang habis dari vending
+-- Dipanggil dari Step() -- beli consumable yang habis dari vending
 local function TakeConsumes()
     if not S.PNB.BuyConsumables then return end
     if _RestockRunning then
@@ -1102,7 +1102,7 @@ local function Consume()
         Sleep(D("Consume"))
     end
 
-    -- Consume dari inventory — hanya item yang toggle-nya aktif
+    -- Consume dari inventory -- hanya item yang toggle-nya aktif
     local consumeIds = {}
     if S.PNB.BuyConsumeArroz  then table.insert(consumeIds, 4604) end
     if S.PNB.BuyConsumeClover then table.insert(consumeIds, 528)  end
@@ -1280,7 +1280,7 @@ local function CheckRentStatus(force)
     RentChecking = false
 end
 
--- Fungsi untuk memastikan item sewa terpasang: lewat alur CheckRentStatus (wrench → popup → clothlease → klik)
+-- Fungsi untuk memastikan item sewa terpasang: lewat alur CheckRentStatus (wrench -> popup -> clothlease -> klik)
 local function SilentEquipRent(force)
     if not force and RentEquipped then return end -- SUDAH TERPASANG, JANGAN SENTUH!
     Log("`9[Rent]`w Memulai cek & pasang item sewa...")
@@ -1597,7 +1597,7 @@ do
                 if not cmdId or cmdId == "" then
                     -- [6d] Command tanpa cmdId: abaikan, log peringatan
                     if content:find('"action"') then
-                        Log("`5[RemoteCmd]`w Response tanpa cmdId — diabaikan.")
+                        Log("`5[RemoteCmd]`w Response tanpa cmdId -- diabaikan.")
                     end
                     return
                 end
@@ -1850,12 +1850,12 @@ local function Step()
         DoWarRent()
     end
 
-    -- ╔════════════════════════════════════════════════════════════╗
-    -- ║ GUARD MUTLAK: ITEM SEWA WAJIB TERPASANG SEBELUM APAPUN  ║
-    -- ║ Jika AutoRent aktif dan item BELUM di badan:             ║
-    -- ║ DILARANG: farm, ambil remote, jalan ke farm pos, mukul   ║
-    -- ║ Bot HANYA boleh coba pasang item atau sewa!              ║
-    -- ╚════════════════════════════════════════════════════════════╝
+    -- ??????????????????????????????????????????????????????????????
+    -- ? GUARD MUTLAK: ITEM SEWA WAJIB TERPASANG SEBELUM APAPUN  ?
+    -- ? Jika AutoRent aktif dan item BELUM di badan:             ?
+    -- ? DILARANG: farm, ambil remote, jalan ke farm pos, mukul   ?
+    -- ? Bot HANYA boleh coba pasang item atau sewa!              ?
+    -- ??????????????????????????????????????????????????????????????
     if S.PNB.AutoRent and not RentEquipped then
         Cheat(false)
         m = false
@@ -1882,7 +1882,7 @@ local function Step()
         if inv(5640) == 0 and not S.PNB.AutoChangeRemote then
             Log("`4[Remote]`w Remote habis dan Auto Change Remote nonaktif! Kirim WA alert, bot tetap jalan...")
             Run.status = "Remote Habis (Alert)"
-            pcall(SendWhatsAppAlert, "Remote Magplant Habis", "Remote (ID 5640) habis di tas dan AutoChangeRemote nonaktif. Bot tidak bisa lanjut ambil remote — tolong isi remote atau aktifkan AutoChangeRemote.")
+            pcall(SendWhatsAppAlert, "Remote Magplant Habis", "Remote (ID 5640) habis di tas dan AutoChangeRemote nonaktif. Bot tidak bisa lanjut ambil remote -- tolong isi remote atau aktifkan AutoChangeRemote.")
             pcall(WebhookNotify, "remote_habis", "Remote magplant habis di tas dan AutoChangeRemote nonaktif")
             Sleep(60000)
             return
@@ -1932,7 +1932,7 @@ local function Step()
             end
             Sleep(D("FaceDelay"))
 
-            -- [GUARD ANTI-TANGAN-KOSONG sudah di paling atas Step() — tidak perlu duplikat di sini]
+            -- [GUARD ANTI-TANGAN-KOSONG sudah di paling atas Step() -- tidak perlu duplikat di sini]
 
             -- Auto-place remote & showhand sebelum cheat aktif (mengunci posisi target)
             PlaceShowHand(targetPlaceX, S.PosY)
@@ -1988,7 +1988,7 @@ local function Step()
                 StuckCount = StuckCount + 1
                 StuckGemTime = now
                 m = false  -- reset farming agar Step re-setup BFG
-                Log(string.format("`4[Watchdog]`w Gems tidak naik %d menit (#%d) — auto-recovery: re-cheat & re-place...", tonumber(S.PNB.StuckMinutes) or 10, StuckCount))
+                Log(string.format("`4[Watchdog]`w Gems tidak naik %d menit (#%d) -- auto-recovery: re-cheat & re-place...", tonumber(S.PNB.StuckMinutes) or 10, StuckCount))
                 -- Paksa beli cheat ulang dan reset posisi apapun stuck count-nya
                 LastBuyCheat = 0
                 m = false
@@ -2179,7 +2179,7 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 if S.PNB.DebugVend then
                     Log("`3[VendDbg]`w Dialog vend_buy: " .. clean:sub(1, 300))
                 end
-                -- Cek item — nama harus cocok dengan yang mau dibeli
+                -- Cek item -- nama harus cocok dengan yang mau dibeli
                 local itemNames = { [4604]="Arroz Con Pollo", [528]="Four-Leaf Clover", [1056]="Songpyeon" }
                 local expectName = itemNames[_VendPending.id] or ""
                 if expectName ~= "" and not clean:find(expectName, 1, true) then
@@ -2195,7 +2195,7 @@ AddHook("OnVariant", "PNB_VAR", function(var)
                 local buyAmt  = math.max(1, tonumber(S.PNB.BuyConsumeAmount) or 200)
                 local totalWl = priceWl * buyAmt
                 if priceWl <= 0 then
-                    -- Harga tidak terbaca — tolak, jangan beli buta
+                    -- Harga tidak terbaca -- tolak, jangan beli buta
                     Log(string.format("`4[Consume]`w Vending (%d,%d) harga tidak terbaca. Skip (aktifkan DebugVend untuk diagnosa).", dx, dy))
                     _VendFailed[dx..","..dy] = true
                     _VendPending = nil
@@ -2234,10 +2234,10 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             end
         end
 
-        -- VENDING: intercept konfirmasi vend_buyconfirm → auto-confirm HANYA jika vend_buy sudah divalidasi
+        -- VENDING: intercept konfirmasi vend_buyconfirm -> auto-confirm HANYA jika vend_buy sudah divalidasi
         if _VendPending and _VendConfirm == nil and a:find("vend_buyconfirm", 1, true) then
             -- _VendConfirm nil di sini berarti hook sudah clear-kan setelah kirim dialog_return vend_buy
-            -- tapi belum dapat buyconfirm — ini flow normal, lanjut confirm
+            -- tapi belum dapat buyconfirm -- ini flow normal, lanjut confirm
             local dx = tonumber(a:match("embed_data|x|(%d+)")) or -1
             local dy = tonumber(a:match("embed_data|y|(%d+)")) or -1
             local bamt = tonumber(a:match("embed_data|buyamount|(%d+)")) or 1
@@ -2258,9 +2258,9 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             Log(string.format("`3[RentDbg]`w Dialog Masuk! WrenchFlag=%s, Isi=%s", tostring(BotTriggeredWrench), a:sub(1, 80)))
         end
 
-        -- RENTING 1: Intercept Self-Wrench Popup → deteksi RentEquipped dari Active effects
+        -- RENTING 1: Intercept Self-Wrench Popup -> deteksi RentEquipped dari Active effects
         -- GUARD KETAT: HANYA aktif saat bot sedang proses RentChecking atau RentWarActive!
-        -- Run.start TIDAK cukup — bot farming normal juga Run.start=true tapi tidak perlu intercept.
+        -- Run.start TIDAK cukup -- bot farming normal juga Run.start=true tapi tidak perlu intercept.
         local isSelfPopupWithRent = (a:find("end_dialog|popup", 1, true) or a:find("add_player_info", 1, true)) and a:find("clothlease", 1, true)
         if isSelfPopupWithRent and (RentChecking or RentWarActive) then
             local clean = StripColor(a)
@@ -2289,7 +2289,7 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             return true
         end
 
-        -- RENTING 2: Intercept Menu Rented Clothing (clothlease) → parse durasi + pasang jika perlu
+        -- RENTING 2: Intercept Menu Rented Clothing (clothlease) -> parse durasi + pasang jika perlu
         -- GUARD KETAT: HANYA saat RentChecking atau RentWarActive, bukan Run.start biasa!
         if (RentChecking or RentWarActive) and a:find("clothlease", 1, true) and (a:find("Rented Clothing", 1, true) or a:find("staticframe", 1, true)) then
             local clean = StripColor(a)
@@ -2375,7 +2375,7 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             return true
         end
 
-        -- RENTING 3: Intercept dialog konfirmasi sewa (rent_buyconfirm) — HANYA jika bot sedang war sewa!
+        -- RENTING 3: Intercept dialog konfirmasi sewa (rent_buyconfirm) -- HANYA jika bot sedang war sewa!
         if RentWarActive and (a:find("rent_buyconfirm", 1, true) or a:find("Purchase Confirmation", 1, true)) then
             local wtb = a:match("embed_data|wtb|([%d%-]+)")
             local rx = a:match("embed_data|x|(%d+)") or S.RentX
@@ -2393,7 +2393,7 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             return true
         end
 
-        -- RENTING 4: Intercept dialog Renting Station (rent_buy) — HANYA jika bot sedang war sewa!
+        -- RENTING 4: Intercept dialog Renting Station (rent_buy) -- HANYA jika bot sedang war sewa!
         if RentWarActive and (a:find("rent_buy", 1, true) or a:find("Renting Station", 1, true)) then
             local rx = a:match("embed_data|x|(%d+)") or S.RentX
             local ry = a:match("embed_data|y|(%d+)") or S.RentY
@@ -2718,7 +2718,7 @@ local function Card(id, h, title)
     -- Bothax mobile sering crash di BeginChild, pakai separator & title sebagai fallback aman
     if title then
         Sp(3)
-        CText(T.accent, "── " .. title .. " " .. string.rep("─", 20))
+        CText(T.accent, "?? " .. title .. " " .. string.rep("?", 20))
         Sp(1)
     end
 end
@@ -2734,7 +2734,7 @@ local function Group(title, defaultOpen)
     return res and true or false
 end
 
--- ── TAB: FARM ───────────────────────────────────────────────
+-- ?? TAB: FARM ???????????????????????????????????????????????
 local function TabFarm()
     local running = Run.start
     if running then
@@ -2801,7 +2801,7 @@ local function TabFarm()
     EndCard()
 end
 
--- ── TAB: MAG ────────────────────────────────────────────────
+-- ?? TAB: MAG ????????????????????????????????????????????????
 local function TabMag()
     local total, empty = #Mag, 0
     for _, mp in ipairs(Mag) do
@@ -2857,7 +2857,7 @@ local function TabMag()
             local m, s = math.floor(remSec/60), remSec%60
             state = string.format("EMPTY %dm%02ds%s", m, s, src == "shared" and " (shared)" or "")
         end
-        CText(active and T.accent or T.dim, active and "  ► " or "    ")
+        CText(active and T.accent or T.dim, active and "  > " or "    ")
         ImGui.SameLine(30)
         CText(T.text, string.format("(%d,%d)", mp.x, mp.y))
         ImGui.SameLine(100)
@@ -2868,7 +2868,7 @@ local function TabMag()
     EndCard()
 end
 
--- ── TAB: SETTING ────────────────────────────────────────────
+-- ?? TAB: SETTING ????????????????????????????????????????????
 local function TabSetting()
     local avail = AvailW()
 
@@ -2956,16 +2956,16 @@ local function TabSetting()
             local rCol = remRent > 300 and T.ok or (remRent > 0 and T.warn or T.bad)
             CText(RentEquipped and T.ok or T.bad,
                 string.format("  %s  |  %s",
-                    RentEquipped and "[✓] TERPASANG" or "[!] BELUM DIPAKAI",
+                    RentEquipped and "[?] TERPASANG" or "[!] BELUM DIPAKAI",
                     curTarget:gsub("Legendary ","L-"):gsub("Mythical ","M-")))
             CText(rCol, "  " .. (remRent > 0 and ("Sisa: " .. FTime(remRent)) or "HABIS / BELUM"))
             Sp(3)
 
-            if Btn("⚡ Cek & Pasang Sewa", T.accent, Half(), 36) then
+            if Btn("? Cek & Pasang Sewa", T.accent, Half(), 36) then
                 RunThread(function() pcall(CheckRentStatus, true) end)
             end
             ImGui.SameLine()
-            if Btn("🎯 War Sewa (Spam)", T.bad, -1, 36) then
+            if Btn("? War Sewa (Spam)", T.bad, -1, 36) then
                 RunThread(function() pcall(DoWarRent) end)
             end
             if RentClothBtn ~= "" then
@@ -3140,7 +3140,7 @@ local function TabSetting()
         if cp then S.Delay.PathStep = math.max(50, math.min(5000, vp)) end
         Sp(2)
         CText(T.dim, "Kecepatan keseluruhan:")
-        local presets = { {"⚡ Fast",60}, {"● Normal",100}, {"🛡 Safe",200}, {"🐢 Pelan",300} }
+        local presets = { {"? Fast",60}, {"? Normal",100}, {"? Safe",200}, {"? Pelan",300} }
         local pw = (avail / #presets) - 6
         for i, pr in ipairs(presets) do
             local on = (tonumber(S.Delay.Scale) == pr[2])
@@ -3153,7 +3153,7 @@ local function TabSetting()
     end
 end
 
--- ── TAB: CONFIG ─────────────────────────────────────────────
+-- ?? TAB: CONFIG ?????????????????????????????????????????????
 local function TabConfig()
     Card("c_save", 126, "Profil Default")
     if Btn("SIMPAN DEFAULT", T.ok, Half(), 38) then SaveSettings() end
@@ -3188,7 +3188,7 @@ local function TabConfig()
     CText(T.dim, "  Monitor: https://gt-pi-ten.vercel.app")
 end
 
--- ── WINDOW ──────────────────────────────────────────────────
+-- ?? WINDOW ??????????????????????????????????????????????????
 local sizeSet = false
 AddHook("OnDraw", "ZAKICIT_DRAW", function()
     if not ImGui then return end
