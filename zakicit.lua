@@ -912,10 +912,13 @@ local function TakeConsumes()
     local ids = _BuildConsumeList()
     if #ids == 0 then return end
 
+    -- Matikan cheat + reset farming state sebelum bergerak ke vending
+    Cheat(false)
+    m = false
+
     local targetWorld = tostring(S.PNB.BuyConsumeWorld or ""):upper()
     local useOtherWorld = (targetWorld ~= "" and targetWorld ~= worldName)
     local maxTry  = math.max(1, tonumber(S.PNB.BuyConsumeTries)  or 10)
-    local maxPrice= math.max(1, tonumber(S.PNB.BuyConsumeMaxPrice) or 10)
     local buyAmt  = math.max(1, tonumber(S.PNB.BuyConsumeAmount)  or 200)
 
     -- Warp ke world vending kalau perlu
@@ -924,11 +927,8 @@ local function TakeConsumes()
         if not wn or wn ~= targetWorld then
             Log("`9[Consume]`w Warp ke world vending: " .. targetWorld)
             Run.status = "Warp ke world vending"
-            Cheat(false)
-            m = false
             Join(targetWorld)
             Sleep(D("Join"))
-            -- Tunggu tile load
             local deadline = NowTime() + 8
             while NowTime() < deadline do
                 local ww = GetWorld()
@@ -938,67 +938,64 @@ local function TakeConsumes()
         end
     end
 
-    -- Proses tiap item yang habis
+    -- Scan semua vending SEKALI untuk semua cid (hemat GetTile)
+    local allCandidates = {}  -- [key] = { x, y, key }
+    local ww = GetWorld()
+    if not ww then
+        Log("`4[Consume]`w GetWorld() nil, batal restock.")
+        m = false
+        return
+    end
+    local debugDone = false
+    for y = 0, (ww.height or 60) - 1 do
+        for x = 0, (ww.width or 100) - 1 do
+            local t = GetTile(x, y)
+            if t and t.fg == 9268 then
+                if S.PNB.DebugVend and not debugDone and t.extra then
+                    debugDone = true
+                    local dbg = "DebugVend tile.extra:"
+                    for k, v in pairs(t.extra) do
+                        dbg = dbg .. " " .. tostring(k) .. "=" .. tostring(v)
+                    end
+                    Log("`3" .. dbg)
+                end
+                local key = x .. "," .. y
+                if not _VendFailed[key] then
+                    table.insert(allCandidates, { x = x, y = y, key = key })
+                end
+            end
+        end
+    end
+
+    -- Proses tiap item yang habis, pakai candidate list yang sama
     for _, cid in ipairs(ids) do
         if inv(cid) >= 1 then goto continue end
 
         local itemName = (cid == 4604 and "Arroz") or (cid == 528 and "Clover") or (cid == 1056 and "Songpyeon") or tostring(cid)
         Log(string.format("`9[Consume]`w %s habis, cari vending...", itemName))
 
-        -- Scan semua vending fg=9268 di world ini
-        local candidates = {}
-        local w = GetWorld()
-        if not w then
-            Log("`4[Consume]`w GetWorld() nil, skip restock.")
-            goto continue
-        end
-        local debugDone = false
-        for y = 0, (w.height or 60) - 1 do
-            for x = 0, (w.width or 100) - 1 do
-                local t = GetTile(x, y)
-                if t and t.fg == 9268 then
-                    -- Debug: log semua field tile.extra vending pertama
-                    if S.PNB.DebugVend and not debugDone and t.extra then
-                        debugDone = true
-                        local dbg = "DebugVend tile.extra:"
-                        for k, v in pairs(t.extra) do
-                            dbg = dbg .. " " .. tostring(k) .. "=" .. tostring(v)
-                        end
-                        Log("`3" .. dbg)
-                    end
-                    local key = x .. "," .. y
-                    if not _VendFailed[key] then
-                        -- Koordinat dikumpulkan; harga/item ID dikonfirmasi dari dialog
-                        table.insert(candidates, { x = x, y = y, key = key })
-                    end
-                end
-            end
-        end
-
-        if #candidates == 0 then
-            Log(string.format("`4[Consume]`w Tidak ada vending tersedia untuk %s (semua skip/gagal).", itemName))
+        if #allCandidates == 0 then
+            Log(string.format("`4[Consume]`w Tidak ada vending tersedia untuk %s.", itemName))
             goto continue
         end
 
-        -- Coba tiap vending sampai berhasil atau habis maxTry
         local bought = false
         local tries  = 0
-        for _, vend in ipairs(candidates) do
+        for _, vend in ipairs(allCandidates) do
             if tries >= maxTry then break end
+            if _VendFailed[vend.key] then goto next_vend end
             tries = tries + 1
 
-            -- Jalan ke vending
             local ax, ay = FindAdjacent(vend.x, vend.y)
             if not ax then ax, ay = vend.x, vend.y end
             SlowFindPath(ax, ay, D("PathStep"))
             Sleep(D("RemoteStep"))
 
-            -- Wrench vending → tunggu dialog vend_buy (intercept di hook OnVariant)
             _VendPending = { x = vend.x, y = vend.y, id = cid }
             _VendBought  = false
             WrenchTile(vend.x, vend.y)
 
-            -- Tunggu hook set _VendConfirm (dialog vend_buy masuk) maks 3s
+            -- Tunggu dialog vend_buy (hook set _VendConfirm) maks 3s
             local t0 = NowTime()
             while NowTime() - t0 < 3 do
                 if _VendConfirm then break end
@@ -1019,7 +1016,7 @@ local function TakeConsumes()
             _VendConfirm = nil
             Sleep(D("RemoteDialog"))
 
-            -- Tunggu hook set _VendBought (console "bought N X") maks 3s
+            -- Tunggu konfirmasi beli (hook set _VendBought) maks 3s
             t0 = NowTime()
             while NowTime() - t0 < 3 do
                 if _VendBought then break end
@@ -1032,25 +1029,25 @@ local function TakeConsumes()
                 bought = true
                 break
             else
-                Log(string.format("`4[Consume]`w Vending (%d,%d) gagal (harga >%dWL / kosong / salah item). Skip.", vend.x, vend.y, maxPrice))
+                Log(string.format("`4[Consume]`w Vending (%d,%d) gagal. Skip.", vend.x, vend.y))
                 _VendFailed[vend.key] = true
             end
             ::next_vend::
         end
 
         if not bought then
-            Log(string.format("`4[Consume]`w Gagal beli %s setelah %d percobaan. Lanjut farm.", itemName, tries))
+            Log(string.format("`4[Consume]`w Gagal beli %s setelah %d percobaan.", itemName, tries))
             pcall(SendWhatsAppAlert, "Consumable Habis",
-                string.format("%s habis dan tidak bisa dibeli dari vending (max %d WL). Cek vending world %s.",
-                    itemName, maxPrice, useOtherWorld and targetWorld or worldName))
+                string.format("%s habis dan tidak bisa dibeli dari vending. Cek vending world %s.",
+                    itemName, useOtherWorld and targetWorld or worldName))
         end
         ::continue::
     end
 
-    -- Reset failed list tiap sesi restock (biar next time coba lagi)
     _VendFailed = {}
+    m = false  -- selalu reset setelah selesai agar Step re-setup farming
 
-    -- Balik ke world farming kalau pindah world
+    -- Balik ke world farming
     if useOtherWorld then
         local wn = WorldNow()
         if wn and wn ~= worldName and worldName ~= "" then
@@ -1058,7 +1055,6 @@ local function TakeConsumes()
             Run.status = "Balik ke world farm"
             Join(worldName)
             Sleep(D("Join"))
-            m = false
         end
     end
 end
@@ -1996,6 +1992,8 @@ local function Step()
         if now - LastRestockCheck >= 300 then
             LastRestockCheck = now
             if _NeedsRestock() then
+                Cheat(false)
+                m = false
                 Run.status = "Restock consumable"
                 pcall(TakeConsumes)
                 if not Run.start then return end
@@ -2140,17 +2138,42 @@ AddHook("OnVariant", "PNB_VAR", function(var)
             local dx = tonumber(a:match("embed_data|x|(%d+)")) or -1
             local dy = tonumber(a:match("embed_data|y|(%d+)")) or -1
             if dx == _VendPending.x and dy == _VendPending.y then
-                -- Cek harga dari dialog — "4 x World Lock" → 4 WL
-                local priceWl = tonumber(a:match("(%d+) x `8World Lock")) or 0
-                local maxP = math.max(1, tonumber(S.PNB.BuyConsumeMaxPrice) or 10)
-                if priceWl > 0 and priceWl > maxP then
-                    Log(string.format("`4[Consume]`w Vending (%d,%d) harga %dWL > max %dWL, skip.", dx, dy, priceWl, maxP))
+                local clean = StripColor(a)
+                -- Debug: log isi dialog vend_buy mentah (aktifkan DebugVend)
+                if S.PNB.DebugVend then
+                    Log("`3[VendDbg]`w Dialog vend_buy: " .. clean:sub(1, 300))
+                end
+                -- Cek item — nama harus cocok dengan yang mau dibeli
+                local itemNames = { [4604]="Arroz Con Pollo", [528]="Four-Leaf Clover", [1056]="Songpyeon" }
+                local expectName = itemNames[_VendPending.id] or ""
+                if expectName ~= "" and not clean:find(expectName, 1, true) then
+                    Log(string.format("`4[Consume]`w Vending (%d,%d) isi item SALAH (bukan %s). Skip.", dx, dy, expectName))
                     _VendFailed[dx..","..dy] = true
                     _VendPending = nil
-                    -- Tutup dialog
                     SendPacket(2, string.format("action|dialog_return\ndialog_name|vend_buy\nx|%d|\ny|%d|\nbuyamount|0\n", dx, dy))
                     return true
                 end
+                -- Cek harga per item dari dialog
+                local priceWl = tonumber(clean:match("(%d+) x World Lock")) or 0
+                local maxP    = math.max(1, tonumber(S.PNB.BuyConsumeMaxPrice) or 10)
+                local buyAmt  = math.max(1, tonumber(S.PNB.BuyConsumeAmount) or 200)
+                local totalWl = priceWl * buyAmt
+                if priceWl <= 0 then
+                    -- Harga tidak terbaca — tolak, jangan beli buta
+                    Log(string.format("`4[Consume]`w Vending (%d,%d) harga tidak terbaca. Skip (aktifkan DebugVend untuk diagnosa).", dx, dy))
+                    _VendFailed[dx..","..dy] = true
+                    _VendPending = nil
+                    SendPacket(2, string.format("action|dialog_return\ndialog_name|vend_buy\nx|%d|\ny|%d|\nbuyamount|0\n", dx, dy))
+                    return true
+                end
+                if priceWl > maxP then
+                    Log(string.format("`4[Consume]`w Vending (%d,%d) harga %dWL > max %dWL. Skip.", dx, dy, priceWl, maxP))
+                    _VendFailed[dx..","..dy] = true
+                    _VendPending = nil
+                    SendPacket(2, string.format("action|dialog_return\ndialog_name|vend_buy\nx|%d|\ny|%d|\nbuyamount|0\n", dx, dy))
+                    return true
+                end
+                Log(string.format("`2[Consume]`w Vending (%d,%d) OK: %s %dWL/item, total ~%dWL. Beli %d...", dx, dy, expectName, priceWl, totalWl, buyAmt))
                 _VendConfirm = { x = dx, y = dy }
                 return true  -- biarkan TakeConsumes yang kirim dialog_return
             end
