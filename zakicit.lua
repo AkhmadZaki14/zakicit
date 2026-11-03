@@ -1,6 +1,6 @@
 -- ============================================================
 --  ZAKICIT PNB v2 — Ultimate Consolidated Edition
---  BUILD: 2026-11-04T00:00:00 CONSUMABLE_VEND_OK
+--  BUILD: 2026-11-04T00:00:00 CONSUMABLE_VEND_OK PATH_FIX2
 --  The Continental Architecture + Bothax/Dederika Features + Web Monitor
 --  API List required: io, MakeRequest, ImGui
 -- ============================================================
@@ -476,12 +476,22 @@ local function SlowFindPath(tx, ty, stepDelay)
 
     local path = FindSafePath(cx, cy, tx, ty)
     if path and #path > 0 then
-        for _, pt in ipairs(path) do
+        -- Step per node A* — bot ngikut jalur aman, bukan teleport lurus
+        -- Skip node pertama (posisi sekarang), mulai dari index 2
+        for i = 2, #path do
+            local pt = path[i]
             FindPath(pt.x, pt.y)
             Sleep(stepDelay)
+            -- Early exit kalau bot sudah sampai tujuan
+            local cur = GetLocal()
+            if cur and cur.pos then
+                local nx = math.floor(cur.pos.x / 32)
+                local ny = math.floor(cur.pos.y / 32)
+                if nx == tx and ny == ty then break end
+            end
         end
     else
-        -- Fallback jika A* gagal
+        -- Fallback: jalan langsung ke target
         FindPath(tx, ty)
         Sleep(stepDelay)
     end
@@ -1476,18 +1486,8 @@ do
             end
         end
 
-        -- [9] Siapkan header heartbeat (token opsional, konsisten dengan server)
-        local token = tostring(S.PNB.MonitorToken or ""):match("^%s*(.-)%s*$")
+        -- Header heartbeat tanpa token (publik)
         local reqHeaders = { ["Content-Type"] = "application/json" }
-        if token ~= "" then
-            reqHeaders["X-Monitor-Token"] = token
-            self.tokenWarned = false
-        else
-            if not self.tokenWarned then
-                self.tokenWarned = true
-                Log("`3[Monitor]`w Monitor jalan tanpa token (server menerima publik).")
-            end
-        end
 
         local gems, wl, dl, bgl, level, ping = 0, 0, 0, 0, 1, 0
         local world = (worldName ~= "" and worldName) or "EXIT"
@@ -2731,7 +2731,7 @@ local function TabFarm()
         if Btn("START", T.ok, -1, 46) then StartPNB() end
     end
     CText(running and T.ok or T.dim, running and ("  " .. Run.status) or "  Idle")
-    CText(T.dim, "  Build: 2026-11-04 | CLEAN DARK v3")
+    CText(T.dim, "  Build: 2026-11-04 PATH_FIX | CLEAN DARK v3")
     Sp(4)
 
     Card("c_stat", 154, "Statistik")
@@ -2822,7 +2822,9 @@ local function TabMag()
     if csb then S.PNB.ScanBG = vsb; RecalcMag() end
     if S.PNB.ScanBG then
         FW()
-        local cmb, vmb = ImGui.InputInt("Target BG ID", S.PNB.MagBgID)
+        CText(T.dim, "Target BG ID:")
+        FW()
+        local cmb, vmb = ImGui.InputInt("##bgid", S.PNB.MagBgID)
         if cmb then S.PNB.MagBgID = math.max(0, vmb); RecalcMag() end
     end
 
@@ -2884,17 +2886,21 @@ local function TabSetting()
             end
             Sp(3)
 
+            CText(T.dim, "Max Harga / item (WL):")
             FW()
-            local cpx, vpx = ImGui.InputInt("Max Harga / item (WL)##bcmp", S.PNB.BuyConsumeMaxPrice)
+            local cpx, vpx = ImGui.InputInt("##bcmp", S.PNB.BuyConsumeMaxPrice)
             if cpx then S.PNB.BuyConsumeMaxPrice = math.max(1, vpx) end
+            CText(T.dim, "Jumlah Beli per Transaksi:")
             FW()
-            local cpa, vpa = ImGui.InputInt("Jumlah Beli per Transaksi##bcamt", S.PNB.BuyConsumeAmount)
+            local cpa, vpa = ImGui.InputInt("##bcamt", S.PNB.BuyConsumeAmount)
             if cpa then S.PNB.BuyConsumeAmount = math.max(1, vpa) end
+            CText(T.dim, "Max Coba per Item:")
             FW()
-            local cpt, vpt = ImGui.InputInt("Max Coba per Item##bctr", S.PNB.BuyConsumeTries)
+            local cpt, vpt = ImGui.InputInt("##bctr", S.PNB.BuyConsumeTries)
             if cpt then S.PNB.BuyConsumeTries = math.max(1, vpt) end
+            CText(T.dim, "Max Total WL per Transaksi:")
             FW()
-            local cpmx, vpmx = ImGui.InputInt("Max Total WL per Transaksi##bcmxt", S.PNB.BuyConsumeMaxTotal)
+            local cpmx, vpmx = ImGui.InputInt("##bcmxt", S.PNB.BuyConsumeMaxTotal)
             if cpmx then S.PNB.BuyConsumeMaxTotal = math.max(1, vpmx) end
             Sp(2)
             local cbD, vD = CB("Debug Vend (log tile.extra)##dbvend", S.PNB.DebugVend)
@@ -2959,7 +2965,9 @@ local function TabSetting()
             Sp(3)
 
             FW()
-            local chRw, nvRw = ImGui.InputText("World Sewa##rw", S.PNB.RentWorld, 64)
+            CText(T.dim, "World Sewa:")
+        FW()
+        local chRw, nvRw = ImGui.InputText("##rw", S.PNB.RentWorld, 64)
             if chRw then S.PNB.RentWorld = tostring(nvRw):upper() end
             if Btn("World Sekarang##rwcur", T.btn, -1, 26) then
                 local cw = WorldNow()
@@ -3038,12 +3046,17 @@ local function TabSetting()
             if c then S.PNB[o[1]] = v end
         end
         FW()
-        local cg, mg = ImGui.InputInt("Max Gems (convert)", S.PNB.MaxGems)
+        CText(T.dim, "Max Gems (convert):")
+        FW()
+        local cg, mg = ImGui.InputInt("##maxgems", S.PNB.MaxGems)
         if cg then S.PNB.MaxGems = math.max(0, mg) end
         FW()
-        local ctx, tx = ImGui.InputInt("Tel X", S.TelX); if ctx then S.TelX = tx end
+        CText(T.dim, "Tel X:")
         FW()
-        local cty, ty = ImGui.InputInt("Tel Y", S.TelY); if cty then S.TelY = ty end
+        local ctx, tx = ImGui.InputInt("##telx", S.TelX); if ctx then S.TelX = tx end
+        CText(T.dim, "Tel Y:")
+        FW()
+        local cty, ty = ImGui.InputInt("##tely", S.TelY); if cty then S.TelY = ty end
         Sp(2)
         if Btn("Auto Cari Telephone di World", T.accent, -1, 30) then AutoFindTel() end
         if Btn("Set Tel di Posisi Saya", T.btn, Half(), 26) then
@@ -3094,7 +3107,9 @@ local function TabSetting()
             end
         end
         FW()
-        local chTok, nvTok = ImGui.InputText("Monitor Token##montok", S.PNB.MonitorToken or "", 128)
+        CText(T.dim, "Monitor Token:")
+        FW()
+        local chTok, nvTok = ImGui.InputText("##montok", S.PNB.MonitorToken or "", 128)
         if chTok then S.PNB.MonitorToken = tostring(nvTok) end
         Sp(4)
     end
@@ -3102,10 +3117,14 @@ local function TabSetting()
     -- DELAY SPEED
     if Group("Delay Speed", false) then
         FW()
-        local cbc, bcv = ImGui.InputInt("Buy Cheat (menit)", S.DelayBuyCheat)
+        CText(T.dim, "Buy Cheat (menit):")
+        FW()
+        local cbc, bcv = ImGui.InputInt("##buycheat", S.DelayBuyCheat)
         if cbc then S.DelayBuyCheat = math.max(1, bcv) end
         FW()
-        local cp, vp = ImGui.InputInt("Per Tile (ms)", S.Delay.PathStep)
+        CText(T.dim, "Per Tile (ms):")
+        FW()
+        local cp, vp = ImGui.InputInt("##pathtile", S.Delay.PathStep)
         if cp then S.Delay.PathStep = math.max(50, math.min(5000, vp)) end
         Sp(2)
         CText(T.dim, "Kecepatan keseluruhan:")
